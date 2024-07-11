@@ -159,7 +159,7 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
 /// Execute the command
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches)?;
-    let resp = client.kv_client().txn(req).await?;
+    let resp = client.kv_client().txn_exec(req).await?;
     resp.print();
 
     Ok(())
@@ -187,7 +187,7 @@ mod tests {
     fn parse_op() {
         assert_eq!(
             parse_op_line(r#"put key1 "created-key1""#).unwrap(),
-            TxnOp::put("key1", "created-key1", None)
+            TxnOp::put("key1", "created-key1")
         );
         assert_eq!(
             parse_op_line(r"get key1 key11").unwrap(),

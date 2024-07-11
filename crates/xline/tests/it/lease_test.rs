@@ -4,7 +4,7 @@ use test_macros::abort_on_panic;
 use tracing::info;
 use xline_test_utils::{
     types::{
-        kv::{PutOptions, RangeRequest},
+        kv::RangeRequest,
         lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
     },
     Client, ClientOptions, Cluster,
@@ -26,11 +26,8 @@ async fn test_lease_expired() -> Result<(), Box<dyn Error>> {
 
     let _ = client
         .kv_client()
-        .put(
-            "foo",
-            "bar",
-            Some(PutOptions::default().with_lease(lease_id)),
-        )
+        .put("foo", "bar")
+        .with_lease(lease_id)
         .await?;
     let res = client.kv_client().range(RangeRequest::new("foo")).await?;
     assert_eq!(res.kvs.len(), 1);
@@ -61,11 +58,8 @@ async fn test_lease_keep_alive() -> Result<(), Box<dyn Error>> {
 
     let _ = client
         .kv_client()
-        .put(
-            "foo",
-            "bar",
-            Some(PutOptions::default().with_lease(lease_id)),
-        )
+        .put("foo", "bar")
+        .with_lease(lease_id)
         .await?;
     let res = client.kv_client().range(RangeRequest::new("foo")).await?;
     assert_eq!(res.kvs.len(), 1);

@@ -42,7 +42,7 @@ async fn test_watch() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    kv_client.put("foo", "bar", None).await?;
+    kv_client.put("foo", "bar").await?;
     kv_client.delete(DeleteRangeRequest::new("foo")).await?;
 
     handle.await?;

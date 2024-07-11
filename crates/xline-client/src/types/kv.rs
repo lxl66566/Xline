@@ -1,25 +1,69 @@
-use xlineapi::command::KeyRange;
+use crate::error::Result;
+use curp::client::ClientApi;
+use futures::FutureExt;
+use pin_project::pin_project;
+use std::future::Future;
+use std::pin::Pin;
+use std::{pin::pin, sync::Arc};
+use tonic::Status;
+use xlineapi::{
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    execute_error::ExecuteError,
+    RequestWrapper,
+};
 pub use xlineapi::{
     CompactionResponse, CompareResult, CompareTarget, DeleteRangeResponse, PutResponse,
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
-/// Options for `Put`, as same as the `PutRequest` for `Put`.
-#[derive(Debug, PartialEq, Default)]
-pub struct PutOptions {
-    /// Inner request
-    inner: xlineapi::PutRequest,
+/// The type of Response
+type ResponseType = std::result::Result<
+    std::result::Result<(CommandResponse, Option<SyncResponse>), ExecuteError>,
+    Status,
+>;
+
+/// The type of the future inside [`PutFut`].
+// type RequestFutureType<'a> = Option<BoxFuture<'a, ResponseType>>;
+type RequestFutureType = Option<Pin<Box<dyn Future<Output = ResponseType> + Send>>>;
+
+/// Future for `Put`, make it awaitable.
+///
+/// Before first poll, fut will be [`Option::None`].
+/// Once It's been polled, fut will be [`Option::Some`] and inner will be [`Option::None`].
+#[pin_project]
+pub struct PutFut {
+    #[pin]
+    /// The future to be polled.
+    fut: RequestFutureType,
+    /// The inner request, to be constructed to a [`Command`].
+    request: Option<xlineapi::PutRequest>,
+    /// The curp_client to be used for sending the request.
+    curp_client: Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
+    /// The token to be used for authentication.
+    token: Option<String>,
 }
 
-impl PutOptions {
+impl PutFut {
     #[inline]
     #[must_use]
     /// `key` is the key, in bytes, to put into the key-value store.
     /// `value` is the value, in bytes, to associate with the key in the key-value store.
-    pub fn with_kv(mut self, key: Vec<u8>, value: Vec<u8>) -> Self {
-        self.inner.key = key;
-        self.inner.value = value;
-        self
+    pub fn new(
+        curp_client: Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
+        token: Option<String>,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Self {
+        Self {
+            curp_client,
+            token,
+            fut: None,
+            request: Some(xlineapi::PutRequest {
+                key,
+                value,
+                ..Default::default()
+            }),
+        }
     }
 
     /// lease is the lease ID to associate with the key in the key-value store.
@@ -27,7 +71,10 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_lease(mut self, lease: i64) -> Self {
-        self.inner.lease = lease;
+        self.request = self.request.map(|mut inner| {
+            inner.lease = lease;
+            inner
+        });
         self
     }
 
@@ -36,7 +83,10 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_prev_kv(mut self, prev_kv: bool) -> Self {
-        self.inner.prev_kv = prev_kv;
+        self.request = self.request.map(|mut inner| {
+            inner.prev_kv = prev_kv;
+            inner
+        });
         self
     }
 
@@ -45,7 +95,10 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_ignore_value(mut self, ignore_value: bool) -> Self {
-        self.inner.ignore_value = ignore_value;
+        self.request = self.request.map(|mut inner| {
+            inner.ignore_value = ignore_value;
+            inner
+        });
         self
     }
 
@@ -54,57 +107,62 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_ignore_lease(mut self, ignore_lease: bool) -> Self {
-        self.inner.ignore_lease = ignore_lease;
+        self.request = self.request.map(|mut inner| {
+            inner.ignore_lease = ignore_lease;
+            inner
+        });
         self
     }
 
-    /// Get `key`
+    /// Take the inner [`xlineapi::PutRequest`] out.
     #[inline]
-    #[must_use]
-    pub fn key(&self) -> &[u8] {
-        &self.inner.key
-    }
-
-    /// Get `value`
-    #[inline]
-    #[must_use]
-    pub fn value(&self) -> &[u8] {
-        &self.inner.value
-    }
-
-    /// Get `lease`
-    #[inline]
-    #[must_use]
-    pub fn lease(&self) -> i64 {
-        self.inner.lease
-    }
-
-    /// Get `prev_kv`
-    #[inline]
-    #[must_use]
-    pub fn prev_kv(&self) -> bool {
-        self.inner.prev_kv
-    }
-
-    /// Get `ignore_value`
-    #[inline]
-    #[must_use]
-    pub fn ignore_value(&self) -> bool {
-        self.inner.ignore_value
-    }
-
-    /// Get `ignore_lease`
-    #[inline]
-    #[must_use]
-    pub fn ignore_lease(&self) -> bool {
-        self.inner.ignore_lease
+    pub fn take_request(&mut self) -> Option<xlineapi::PutRequest> {
+        self.request.take()
     }
 }
 
-impl From<PutOptions> for xlineapi::PutRequest {
+impl std::fmt::Debug for PutFut {
     #[inline]
-    fn from(req: PutOptions) -> Self {
-        req.inner
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PutFut")
+            .field("inner", &self.request)
+            .finish()
+    }
+}
+
+impl Future for PutFut {
+    type Output = Result<PutResponse>;
+
+    /// Poll the inner future constructed by [`xlineapi::PutRequest`].
+    ///
+    /// # panic
+    ///
+    /// panic if [`Self::inner`] is [`None`].
+    #[inline]
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if self.fut.is_none() {
+            let cmd = Command::new(RequestWrapper::from(
+                self.take_request()
+                    .unwrap_or_else(|| panic!("inner request should be constructed")),
+            ));
+            let client = Arc::clone(&self.curp_client);
+            let token = self.token.clone();
+            self.fut = Some(Box::pin(async move {
+                client.propose(&cmd, token.as_ref(), true).await
+            }));
+        }
+        match self
+            .fut
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("`self.fut` must not be none"))
+            .poll_unpin(cx)
+        {
+            std::task::Poll::Ready(res) => std::task::Poll::Ready(Ok(res??.0.into_inner().into())),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 }
 
@@ -459,7 +517,7 @@ impl From<DeleteRangeRequest> for xlineapi::DeleteRangeRequest {
 
 /// Transaction comparison.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Compare(xlineapi::Compare);
+pub struct Compare(pub(crate) xlineapi::Compare);
 
 impl Compare {
     /// Creates a new `Compare`.
@@ -551,160 +609,103 @@ impl Compare {
     }
 }
 
-/// Transaction operation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxnOp {
-    /// The inner txn op request
-    inner: xlineapi::Request,
+/// Transaction operation
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum TxnOp {
+    /// Request, used by old version. the Request will be replaced later.
+    Request(xlineapi::Request),
+    /// Future, used by new version
+    Future(PutFut),
 }
 
-impl TxnOp {
-    /// Creates a `Put` operation.
+impl From<xlineapi::Request> for TxnOp {
     #[inline]
-    #[must_use]
-    pub fn put(
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        option: Option<PutOptions>,
-    ) -> Self {
-        TxnOp {
-            inner: xlineapi::Request::RequestPut(
-                option
-                    .unwrap_or_default()
-                    .with_kv(key.into(), value.into())
-                    .into(),
+    fn from(value: xlineapi::Request) -> Self {
+        Self::Request(value)
+    }
+}
+
+impl From<PutFut> for TxnOp {
+    #[inline]
+    fn from(value: PutFut) -> Self {
+        Self::Future(value)
+    }
+}
+
+impl From<TxnOp> for xlineapi::Request {
+    #[inline]
+    fn from(value: TxnOp) -> Self {
+        match value {
+            TxnOp::Request(request) => request,
+            TxnOp::Future(mut fut) => xlineapi::Request::RequestPut(
+                fut.take_request()
+                    .unwrap_or_else(|| panic!("txn op future is not ready")),
             ),
         }
     }
+}
 
+// /// Transaction operation.
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct TxnOp<'a>(TxnOp<'a>);
+
+impl TxnOp {
     /// Creates a `Range` operation.
     #[inline]
     #[must_use]
     pub fn range(request: RangeRequest) -> Self {
-        TxnOp {
-            inner: xlineapi::Request::RequestRange(request.into()),
-        }
+        xlineapi::Request::RequestRange(request.into()).into()
     }
 
     /// Creates a `DeleteRange` operation.
     #[inline]
     #[must_use]
     pub fn delete(request: DeleteRangeRequest) -> Self {
-        TxnOp {
-            inner: xlineapi::Request::RequestDeleteRange(request.into()),
-        }
+        xlineapi::Request::RequestDeleteRange(request.into()).into()
     }
 
     /// Creates a `Txn` operation.
     #[inline]
     #[must_use]
     pub fn txn(txn: TxnRequest) -> Self {
-        TxnOp {
-            inner: xlineapi::Request::RequestTxn(txn.into()),
-        }
-    }
-}
-
-impl From<TxnOp> for xlineapi::Request {
-    #[inline]
-    fn from(op: TxnOp) -> Self {
-        op.inner
+        xlineapi::Request::RequestTxn(txn.into()).into()
     }
 }
 
 /// Transaction of multiple operations.
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct TxnRequest {
     /// the inner txn request
     pub(crate) inner: xlineapi::TxnRequest,
-    /// If `when` have be set
-    c_when: bool,
-    /// If `then` have be set
-    c_then: bool,
-    /// If `else` have be set
-    c_else: bool,
 }
 
 impl TxnRequest {
-    /// Creates a new transaction.
-    #[inline]
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            inner: xlineapi::TxnRequest {
-                compare: Vec::new(),
-                success: Vec::new(),
-                failure: Vec::new(),
-            },
-            c_when: false,
-            c_then: false,
-            c_else: false,
-        }
-    }
-
-    /// Takes a list of comparison. If all comparisons passed in succeed,
+    /// Takes a comparison and append it to inner compare Vec. If all comparisons passed in succeed,
     /// the operations passed into `and_then()` will be executed. Or the operations
     /// passed into `or_else()` will be executed.
-    ///
-    /// # Panics
-    ///
-    /// panics if `when` is called twice or called after `when` or called after `or_else`
     #[inline]
-    #[must_use]
-    pub fn when(mut self, compares: impl Into<Vec<Compare>>) -> Self {
-        assert!(!self.c_when, "cannot call when twice");
-        assert!(!self.c_then, "cannot call when after and_then");
-        assert!(!self.c_else, "cannot call when after or_else");
-
-        let compares_vec: Vec<Compare> = compares.into();
-        self.c_when = true;
-        self.inner.compare = compares_vec.into_iter().map(|c| c.0).collect();
-        self
+    pub fn when(&mut self, compare: impl Into<Compare>) {
+        self.inner.compare.push(compare.into().0);
     }
 
-    /// Takes a list of operations. The operations list will be executed, if the
-    /// comparisons passed in `when()` succeed.
-    ///
-    /// # Panics
-    ///
-    /// panics if `and_then` is called twice or called after `or_else`
+    /// Append an operation to inner success Vec. The operations list will be executed,
+    /// if the comparisons passed in `when()` succeed.
     #[inline]
-    #[must_use]
-    pub fn and_then(mut self, operations: impl Into<Vec<TxnOp>>) -> Self {
-        assert!(!self.c_then, "cannot call and_then twice");
-        assert!(!self.c_else, "cannot call and_then after or_else");
-
-        self.c_then = true;
-        self.inner.success = operations
-            .into()
-            .into_iter()
-            .map(|op| xlineapi::RequestOp {
-                request: Some(op.into()),
-            })
-            .collect();
-        self
+    pub fn and_then(&mut self, operation: impl Into<TxnOp>) {
+        let temp = operation.into();
+        self.inner.success.push(xlineapi::RequestOp {
+            request: Some(temp.into()),
+        });
     }
 
-    /// Takes a list of operations. The operations list will be executed, if the
+    /// Append an operation to inner failure Vec. The operations list will be executed, if the
     /// comparisons passed in `when()` fail.
-    ///
-    /// # Panics
-    ///
-    /// panics if `or_else` is called twice
     #[inline]
-    #[must_use]
-    pub fn or_else(mut self, operations: impl Into<Vec<TxnOp>>) -> Self {
-        assert!(!self.c_else, "cannot call or_else twice");
-
-        self.c_else = true;
-        self.inner.failure = operations
-            .into()
-            .into_iter()
-            .map(|op| xlineapi::RequestOp {
-                request: Some(op.into()),
-            })
-            .collect();
-        self
+    pub fn or_else(&mut self, operation: impl Into<TxnOp>) {
+        self.inner.failure.push(xlineapi::RequestOp {
+            request: Some(operation.into().into()),
+        });
     }
 }
 

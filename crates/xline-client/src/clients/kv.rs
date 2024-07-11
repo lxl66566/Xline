@@ -2,13 +2,15 @@ use std::{fmt::Debug, sync::Arc};
 
 use tonic::transport::Channel;
 use xlineapi::{
-    command::Command, CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse,
-    RequestWrapper, TxnResponse,
+    command::Command, CompactionResponse, DeleteRangeResponse, RangeResponse, RequestWrapper,
+    TxnResponse,
 };
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutOptions, RangeRequest, TxnRequest},
+    types::kv::{
+        CompactionRequest, Compare, DeleteRangeRequest, PutFut, RangeRequest, TxnOp, TxnRequest,
+    },
     AuthService, CurpClient,
 };
 
@@ -25,6 +27,8 @@ pub struct KvClient {
     kv_client: xlineapi::KvClient<Channel>,
     /// The auth token
     token: Option<String>,
+    /// TxnRequest
+    txn: TxnRequest,
 }
 
 impl Debug for KvClient {
@@ -53,6 +57,7 @@ impl KvClient {
                 token.as_ref().and_then(|t| t.parse().ok().map(Arc::new)),
             )),
             token,
+            txn: TxnRequest::default(),
         }
     }
 
@@ -76,28 +81,20 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     client.put("key1", "value1", None).await?;
-    ///     client.put("key1", "value1", PutOptions::default().with_prev_kv(true)).await?;
+    ///     client.put("key1", "value1").await?;
+    ///     client.put("key1", "value1").with_prev_kv(true).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn put(
-        &self,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        option: Option<PutOptions>,
-    ) -> Result<PutResponse> {
-        let request = RequestWrapper::from(xlineapi::PutRequest::from(
-            option.unwrap_or_default().with_kv(key.into(), value.into()),
-        ));
-        let cmd = Command::new(request);
-        let (cmd_res, _sync_res) = self
-            .curp_client
-            .propose(&cmd, self.token.as_ref(), true)
-            .await??;
-        Ok(cmd_res.into_inner().into())
+    pub fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut {
+        PutFut::new(
+            Arc::clone(&self.curp_client),
+            self.token.clone(),
+            key.into(),
+            value.into(),
+        )
     }
 
     /// Get a range of keys from the store
@@ -181,59 +178,6 @@ impl KvClient {
         Ok(cmd_res.into_inner().into())
     }
 
-    /// Creates a transaction, which can provide serializable writes
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the inner CURP client encountered a propose failure
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// use xline_client::{
-    ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
-    ///     Client, ClientOptions,
-    /// };
-    /// use anyhow::Result;
-    ///
-    /// #[tokio::main]
-    /// async fn main() -> Result<()> {
-    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
-    ///
-    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
-    ///         .await?
-    ///         .kv_client();
-    ///
-    ///     let txn_req = TxnRequest::new()
-    ///         .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
-    ///         .and_then(
-    ///             &[TxnOp::put(
-    ///                 PutRequest::new("key2", "value3").with_prev_kv(true),
-    ///             )][..],
-    ///         )
-    ///         .or_else(&[TxnOp::range(RangeRequest::new("key2"))][..]);
-    ///
-    ///     let _resp = client.txn(txn_req).await?;
-    ///
-    ///     Ok(())
-    /// }
-    /// ```
-    #[inline]
-    pub async fn txn(&self, request: TxnRequest) -> Result<TxnResponse> {
-        let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
-        let cmd = Command::new(request);
-        let (cmd_res, Some(sync_res)) = self
-            .curp_client
-            .propose(&cmd, self.token.as_ref(), false)
-            .await??
-        else {
-            unreachable!("sync_res is always Some when use_fast_path is false");
-        };
-        let mut res_wrapper = cmd_res.into_inner();
-        res_wrapper.update_revision(sync_res.revision());
-        Ok(res_wrapper.into())
-    }
-
     /// Compacts the key-value store up to a given revision.
     /// All keys with revisions less than the given revision will be compacted.
     /// The compaction process will remove all historical versions of these keys, except for the most recent one.
@@ -287,5 +231,97 @@ impl KvClient {
             .propose(&cmd, self.token.as_ref(), true)
             .await??;
         Ok(cmd_res.into_inner().into())
+    }
+
+    // transaction
+
+    /// Append a condition to the transaction `compare`
+    #[inline]
+    pub fn when(&mut self, compares: impl Into<Compare>) -> &mut Self {
+        self.txn.when(compares.into());
+        self
+    }
+    /// Append a operation to the transaction `success`
+    #[inline]
+    pub fn and_then<F, O>(&mut self, operation: F) -> &mut Self
+    where
+        F: FnOnce(&mut Self) -> O,
+        O: Into<TxnOp>,
+    {
+        let temp = operation(self).into();
+        self.txn.and_then(temp);
+        self
+    }
+    /// Append a operation to the transaction `failure`
+    #[inline]
+    pub fn or_else<F, O>(&mut self, operation: F) -> &mut Self
+    where
+        F: FnOnce(&mut Self) -> O,
+        O: Into<TxnOp>,
+    {
+        let temp = operation(self).into();
+        self.txn.or_else(temp);
+        self
+    }
+    /// swap out self.txn with default value, to send the transaction stored in Self to cluster
+    #[inline]
+    pub fn replace_txn_with_default(&mut self) -> TxnRequest {
+        let default_value = TxnRequest::default();
+        std::mem::replace(&mut self.txn, default_value)
+    }
+
+    /// Send the transaction stored in Self to cluster, which can provide serializable writes
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the transaction is empty, that is the `when`,
+    /// `and_then` and `or_else` has not been called since last `txn` called.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     Client, ClientOptions,
+    /// };
+    /// use anyhow::Result;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///         
+    ///
+    ///     let _resp = client
+    ///                 .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
+    ///                 .and_then(|c| [c.put("key2", "value3").with_prev_kv(true)])
+    ///                 .or_else(|_| [TxnOp::range(RangeRequest::new("key2"))]).txn_exec().await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[inline]
+    pub async fn txn_exec(&mut self) -> Result<TxnResponse> {
+        let request = self.replace_txn_with_default();
+        let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
+        let cmd = Command::new(request);
+        let (cmd_res, Some(sync_res)) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), false)
+            .await??
+        else {
+            unreachable!("sync_res is always Some when use_fast_path is false");
+        };
+        let mut res_wrapper = cmd_res.into_inner();
+        res_wrapper.update_revision(sync_res.revision());
+        Ok(res_wrapper.into())
     }
 }
