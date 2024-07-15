@@ -1,13 +1,13 @@
 use anyhow::Result;
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline_client::{types::kv::PutOptions, Client};
+use xline_client::{types::kv::PutFut, Client};
 
 use crate::utils::printer::Printer;
 
 /// Indicates the type of the request builted.
 /// The first `Vec<u8>` is the key, the second `Vec<u8>` is the value,
 /// and the third is the options.
-type PutRequest = (Vec<u8>, Vec<u8>, PutOptions);
+type PutRequest = (Vec<u8>, Vec<u8>, PutFut);
 
 /// Definition of `get` command
 pub(crate) fn command() -> Command {
@@ -35,7 +35,7 @@ pub(crate) fn build_request(matches: &ArgMatches) -> PutRequest {
     let ignore_value = matches.get_flag("ignore_value");
     let ignore_lease = matches.get_flag("ignore_lease");
 
-    let request = PutOptions::default()
+    let request = PutFut::default()
         .with_lease(*lease)
         .with_prev_kv(prev_kv)
         .with_ignore_value(ignore_value)
@@ -65,14 +65,14 @@ mod tests {
         let test_cases = vec![
             TestCase::new(
                 vec!["put", "key1", "value1"],
-                Some(("key1".into(), "value1".into(), PutOptions::default())),
+                Some(("key1".into(), "value1".into(), PutFut::default())),
             ),
             TestCase::new(
                 vec!["put", "key2", "value2", "--lease", "1"],
                 Some((
                     "key2".into(),
                     "value2".into(),
-                    PutOptions::default().with_lease(1),
+                    PutFut::default().with_lease(1),
                 )),
             ),
             TestCase::new(
@@ -80,7 +80,7 @@ mod tests {
                 Some((
                     "key3".into(),
                     "value3".into(),
-                    PutOptions::default().with_prev_kv(true),
+                    PutFut::default().with_prev_kv(true),
                 )),
             ),
             TestCase::new(
@@ -88,7 +88,7 @@ mod tests {
                 Some((
                     "key4".into(),
                     "value4".into(),
-                    PutOptions::default().with_ignore_value(true),
+                    PutFut::default().with_ignore_value(true),
                 )),
             ),
             TestCase::new(
@@ -96,7 +96,7 @@ mod tests {
                 Some((
                     "key5".into(),
                     "value5".into(),
-                    PutOptions::default().with_ignore_lease(true),
+                    PutFut::default().with_ignore_lease(true),
                 )),
             ),
         ];

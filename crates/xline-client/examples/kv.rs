@@ -1,7 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeRequest,
+        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest,
         TxnOp, TxnRequest,
     },
     Client, ClientOptions,
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
             &[TxnOp::put(
                 "key2",
                 "value3",
-                Some(PutOptions::default().with_prev_kv(true)),
+                Some(PutFut::default().with_prev_kv(true)),
             )][..],
         )
         .or_else(&[TxnOp::range(RangeRequest::new("key2"))][..]);

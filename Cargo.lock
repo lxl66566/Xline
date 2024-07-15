@@ -3904,6 +3904,7 @@ dependencies = [
  "http",
  "madsim-tokio",
  "madsim-tonic",
+ "pin-project",
  "rand",
  "test-macros",
  "thiserror",

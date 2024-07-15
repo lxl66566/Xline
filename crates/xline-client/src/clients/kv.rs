@@ -2,13 +2,13 @@ use std::{fmt::Debug, sync::Arc};
 
 use tonic::transport::Channel;
 use xlineapi::{
-    command::Command, CompactionResponse, DeleteRangeResponse, PutResponse, RangeResponse,
-    RequestWrapper, TxnResponse,
+    command::Command, CompactionResponse, DeleteRangeResponse, RangeResponse, RequestWrapper,
+    TxnResponse,
 };
 
 use crate::{
     error::Result,
-    types::kv::{CompactionRequest, DeleteRangeRequest, PutOptions, RangeRequest, TxnRequest},
+    types::kv::{CompactionRequest, DeleteRangeRequest, PutFut, RangeRequest, TxnRequest},
     AuthService, CurpClient,
 };
 
@@ -83,21 +83,22 @@ impl KvClient {
     /// }
     /// ```
     #[inline]
-    pub async fn put(
-        &self,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        option: Option<PutOptions>,
-    ) -> Result<PutResponse> {
-        let request = RequestWrapper::from(xlineapi::PutRequest::from(
-            option.unwrap_or_default().with_kv(key.into(), value.into()),
-        ));
-        let cmd = Command::new(request);
-        let (cmd_res, _sync_res) = self
-            .curp_client
-            .propose(&cmd, self.token.as_ref(), true)
-            .await??;
-        Ok(cmd_res.into_inner().into())
+    pub async fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut<'_> {
+        // let request = RequestWrapper::from(xlineapi::PutRequest::from(
+        //     option.unwrap_or_default().with_kv(key.into(), value.into()),
+        // ));
+        // let cmd = Command::new(request);
+        // let (cmd_res, _sync_res) = self
+        //     .curp_client
+        //     .propose(&cmd, self.token.as_ref(), true)
+        //     .await??;
+        // Ok(cmd_res.into_inner().into())
+        PutFut::new(
+            &self.curp_client,
+            self.token.as_ref(),
+            key.into(),
+            value.into(),
+        )
     }
 
     /// Get a range of keys from the store

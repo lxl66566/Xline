@@ -3,8 +3,8 @@ use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeRequest,
-        TxnOp, TxnRequest,
+        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest, TxnOp,
+        TxnRequest,
     },
 };
 
@@ -21,7 +21,7 @@ async fn put_should_success_in_normal_path() -> Result<()> {
     // overwrite with prev key
     {
         let resp = client
-            .put("put", "456", Some(PutOptions::default().with_prev_kv(true)))
+            .put("put", "456", Some(PutFut::default().with_prev_kv(true)))
             .await?;
         let prev_kv = resp.prev_kv;
         assert!(prev_kv.is_some());
@@ -33,7 +33,7 @@ async fn put_should_success_in_normal_path() -> Result<()> {
     // overwrite again with prev key
     {
         let resp = client
-            .put("put", "456", Some(PutOptions::default().with_prev_kv(true)))
+            .put("put", "456", Some(PutFut::default().with_prev_kv(true)))
             .await?;
         let prev_kv = resp.prev_kv;
         assert!(prev_kv.is_some());
@@ -188,7 +188,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
                         &[TxnOp::put(
                             "txn01",
                             "02",
-                            Some(PutOptions::default().with_prev_kv(true)),
+                            Some(PutFut::default().with_prev_kv(true)),
                         )][..],
                     )
                     .or_else(&[TxnOp::range(RangeRequest::new("txn01"))][..]),

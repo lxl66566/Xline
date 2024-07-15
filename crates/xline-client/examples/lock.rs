@@ -1,7 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     clients::Xutex,
-    types::kv::{Compare, CompareResult, PutOptions, TxnOp},
+    types::kv::{Compare, CompareResult, PutFut, TxnOp},
     Client, ClientOptions,
 };
 
@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
         .and_then([TxnOp::put(
             "key2",
             "value3",
-            Some(PutOptions::default().with_prev_kv(true)),
+            Some(PutFut::default().with_prev_kv(true)),
         )])
         .or_else(&[]);
 

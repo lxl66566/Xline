@@ -7,7 +7,7 @@ use thiserror::Error;
 use xline_client::types::kv::{RangeRequest, RangeResponse};
 use xline_client::{
     error::XlineClientError,
-    types::kv::{PutOptions, PutResponse},
+    types::kv::{PutFut, PutResponse},
     Client, ClientOptions,
 };
 use xlineapi::command::Command;
@@ -96,7 +96,7 @@ impl BenchClient {
         &mut self,
         key: impl Into<Vec<u8>>,
         value: impl Into<Vec<u8>>,
-        options: Option<PutOptions>,
+        options: Option<PutFut>,
     ) -> Result<PutResponse, BenchClientError> {
         match self.kv_client {
             KVClient::Xline(ref mut xline_client) => {
@@ -142,11 +142,11 @@ impl BenchClient {
 
 /// Convert utils
 mod convert {
-    use xline_client::types::kv::PutOptions;
+    use xline_client::types::kv::PutFut;
     use xlineapi::{KeyValue, PutResponse, ResponseHeader};
 
     /// transform `xline_client::types::kv::PutOptions` into `etcd_client::PutOptions`
-    pub(super) fn put_req(req: &PutOptions) -> etcd_client::PutOptions {
+    pub(super) fn put_req(req: &PutFut) -> etcd_client::PutOptions {
         let mut opts = etcd_client::PutOptions::new().with_lease(req.lease());
         if req.prev_kv() {
             opts = opts.with_prev_key();

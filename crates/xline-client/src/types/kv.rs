@@ -1,25 +1,63 @@
-use xlineapi::command::KeyRange;
+use std::{pin::pin, sync::Arc};
+
+use crate::error::Result;
+use curp::client::ClientApi;
+use futures::{future::BoxFuture, FutureExt};
+use pin_project::pin_project;
+use std::future::Future;
+use tonic::Status;
+use xlineapi::{
+    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    execute_error::ExecuteError,
+    RequestWrapper,
+};
 pub use xlineapi::{
     CompactionResponse, CompareResult, CompareTarget, DeleteRangeResponse, PutResponse,
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
-/// Options for `Put`, as same as the `PutRequest` for `Put`.
-#[derive(Debug, PartialEq, Default)]
-pub struct PutOptions {
-    /// Inner request
-    inner: xlineapi::PutRequest,
+/// Future for `Put`, make it awaitable.
+///
+/// Before first poll, fut will be [`Option::None`].
+/// Once It's been polled, fut will be [`Option::Some`] and inner will be [`Option::None`].
+#[pin_project]
+pub struct PutFut<'a> {
+    #[pin]
+    fut: Option<
+        BoxFuture<
+            'a,
+            std::result::Result<
+                std::result::Result<(CommandResponse, Option<SyncResponse>), ExecuteError>,
+                Status,
+            >,
+        >,
+    >,
+    inner: Option<xlineapi::PutRequest>,
+    curp_client: &'a Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
+    token: Option<&'a String>,
 }
 
-impl PutOptions {
+impl<'a> PutFut<'a> {
     #[inline]
     #[must_use]
     /// `key` is the key, in bytes, to put into the key-value store.
     /// `value` is the value, in bytes, to associate with the key in the key-value store.
-    pub fn with_kv(mut self, key: Vec<u8>, value: Vec<u8>) -> Self {
-        self.inner.key = key;
-        self.inner.value = value;
-        self
+    pub fn new(
+        curp_client: &'a Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
+        token: Option<&'a String>,
+        key: Vec<u8>,
+        value: Vec<u8>,
+    ) -> Self {
+        Self {
+            curp_client,
+            token,
+            fut: None,
+            inner: Some(xlineapi::PutRequest {
+                key,
+                value,
+                ..Default::default()
+            }),
+        }
     }
 
     /// lease is the lease ID to associate with the key in the key-value store.
@@ -27,7 +65,10 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_lease(mut self, lease: i64) -> Self {
-        self.inner.lease = lease;
+        self.inner = self.inner.map(|mut inner| {
+            inner.lease = lease;
+            inner
+        });
         self
     }
 
@@ -36,7 +77,10 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_prev_kv(mut self, prev_kv: bool) -> Self {
-        self.inner.prev_kv = prev_kv;
+        self.inner = self.inner.map(|mut inner| {
+            inner.prev_kv = prev_kv;
+            inner
+        });
         self
     }
 
@@ -45,7 +89,10 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_ignore_value(mut self, ignore_value: bool) -> Self {
-        self.inner.ignore_value = ignore_value;
+        self.inner = self.inner.map(|mut inner| {
+            inner.ignore_value = ignore_value;
+            inner
+        });
         self
     }
 
@@ -54,57 +101,36 @@ impl PutOptions {
     #[inline]
     #[must_use]
     pub fn with_ignore_lease(mut self, ignore_lease: bool) -> Self {
-        self.inner.ignore_lease = ignore_lease;
+        self.inner = self.inner.map(|mut inner| {
+            inner.ignore_lease = ignore_lease;
+            inner
+        });
         self
-    }
-
-    /// Get `key`
-    #[inline]
-    #[must_use]
-    pub fn key(&self) -> &[u8] {
-        &self.inner.key
-    }
-
-    /// Get `value`
-    #[inline]
-    #[must_use]
-    pub fn value(&self) -> &[u8] {
-        &self.inner.value
-    }
-
-    /// Get `lease`
-    #[inline]
-    #[must_use]
-    pub fn lease(&self) -> i64 {
-        self.inner.lease
-    }
-
-    /// Get `prev_kv`
-    #[inline]
-    #[must_use]
-    pub fn prev_kv(&self) -> bool {
-        self.inner.prev_kv
-    }
-
-    /// Get `ignore_value`
-    #[inline]
-    #[must_use]
-    pub fn ignore_value(&self) -> bool {
-        self.inner.ignore_value
-    }
-
-    /// Get `ignore_lease`
-    #[inline]
-    #[must_use]
-    pub fn ignore_lease(&self) -> bool {
-        self.inner.ignore_lease
     }
 }
 
-impl From<PutOptions> for xlineapi::PutRequest {
-    #[inline]
-    fn from(req: PutOptions) -> Self {
-        req.inner
+impl Future for PutFut<'_> {
+    type Output = Result<PutResponse>;
+
+    /// Poll the inner future constructed by [`xlineapi::PutRequest`].
+    ///
+    /// # panic
+    ///
+    /// panic if inner is `None`.
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if self.fut.is_none() {
+            let cmd = Command::new(RequestWrapper::from(self.inner.take().unwrap()));
+            self.fut = Some(self.curp_client.propose(&cmd, self.token, true));
+        }
+        match self.fut.as_mut().unwrap().poll_unpin(cx) {
+            // std::task::Poll::Ready(Ok(cmd_res)) => std::task::Poll::Ready(Ok(cmd_res??.into())),
+            std::task::Poll::Ready(res) => std::task::Poll::Ready(Ok(res??.0.into_inner().into())),
+            // std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e.into())),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 }
 
@@ -560,22 +586,18 @@ pub struct TxnOp {
 
 impl TxnOp {
     /// Creates a `Put` operation.
-    #[inline]
-    #[must_use]
-    pub fn put(
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        option: Option<PutOptions>,
-    ) -> Self {
-        TxnOp {
-            inner: xlineapi::Request::RequestPut(
-                option
-                    .unwrap_or_default()
-                    .with_kv(key.into(), value.into())
-                    .into(),
-            ),
-        }
-    }
+    // #[inline]
+    // #[must_use]
+    // pub fn put(key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
+    //     TxnOp {
+    //         inner: xlineapi::Request::RequestPut(
+    //             option
+    //                 .unwrap_or_default()
+    //                 .with_kv(key.into(), value.into())
+    //                 .into(),
+    //         ),
+    //     }
+    // }
 
     /// Creates a `Range` operation.
     #[inline]

@@ -3,7 +3,7 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use xline_test_utils::{
     types::kv::{
-        Compare, CompareResult, DeleteRangeRequest, PutOptions, RangeRequest, Response, SortOrder,
+        Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest, Response, SortOrder,
         SortTarget, TxnOp, TxnRequest,
     },
     Client, ClientOptions, Cluster,
@@ -15,7 +15,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     struct TestCase {
         key: &'static str,
         value: &'static str,
-        option: Option<PutOptions>,
+        option: Option<PutFut>,
         want_err: bool,
     }
 
@@ -23,7 +23,7 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
         TestCase {
             key: "foo",
             value: "",
-            option: Some(PutOptions::default().with_ignore_value(true)),
+            option: Some(PutFut::default().with_ignore_value(true)),
             want_err: true,
         },
         TestCase {
@@ -35,13 +35,13 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
         TestCase {
             key: "foo",
             value: "",
-            option: Some(PutOptions::default().with_ignore_value(true)),
+            option: Some(PutFut::default().with_ignore_value(true)),
             want_err: false,
         },
         TestCase {
             key: "foo",
             value: "",
-            option: Some(PutOptions::default().with_lease(12345)),
+            option: Some(PutFut::default().with_lease(12345)),
             want_err: true,
         },
     ];
