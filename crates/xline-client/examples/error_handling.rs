@@ -1,6 +1,6 @@
 //! An example to show how the errors are organized in `xline-client`
 use anyhow::Result;
-use xline_client::{error::XlineClientError, types::kv::PutFut, Client, ClientOptions};
+use xline_client::{error::XlineClientError, Client, ClientOptions};
 use xlineapi::execute_error::ExecuteError;
 
 #[tokio::main]
@@ -15,13 +15,7 @@ async fn main() -> Result<()> {
     // We try to update the key using its previous value.
     // It should return an error and it should be `key not found`
     // as we did not add it before.
-    let resp = client
-        .put(
-            "key",
-            "",
-            Some(PutFut::default().with_ignore_value(true)),
-        )
-        .await;
+    let resp = client.put("key", "").with_ignore_value(true).await;
     let err = resp.unwrap_err();
 
     // We match the inner error returned by the Curp server.

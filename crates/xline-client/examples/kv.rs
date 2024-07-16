@@ -1,8 +1,8 @@
 use anyhow::Result;
 use xline_client::{
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest,
-        TxnOp, TxnRequest,
+        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest, TxnOp,
+        TxnRequest,
     },
     Client, ClientOptions,
 };
@@ -17,8 +17,8 @@ async fn main() -> Result<()> {
         .kv_client();
 
     // put
-    client.put("key1", "value1", None).await?;
-    client.put("key2", "value2", None).await?;
+    client.put("key1", "value1").await?;
+    client.put("key2", "value2").await?;
 
     // range
     let resp = client.range(RangeRequest::new("key1")).await?;

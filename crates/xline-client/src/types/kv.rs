@@ -1,10 +1,9 @@
-use std::{pin::pin, sync::Arc};
-
 use crate::error::Result;
 use curp::client::ClientApi;
 use futures::{future::BoxFuture, FutureExt};
 use pin_project::pin_project;
 use std::future::Future;
+use std::{pin::pin, sync::Arc};
 use tonic::Status;
 use xlineapi::{
     command::{Command, CommandResponse, KeyRange, SyncResponse},
@@ -16,6 +15,17 @@ pub use xlineapi::{
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
+/// The type of the future inside [`PutFut`].
+type RequestFutureType<'a> = Option<
+    BoxFuture<
+        'a,
+        std::result::Result<
+            std::result::Result<(CommandResponse, Option<SyncResponse>), ExecuteError>,
+            Status,
+        >,
+    >,
+>;
+
 /// Future for `Put`, make it awaitable.
 ///
 /// Before first poll, fut will be [`Option::None`].
@@ -23,17 +33,13 @@ pub use xlineapi::{
 #[pin_project]
 pub struct PutFut<'a> {
     #[pin]
-    fut: Option<
-        BoxFuture<
-            'a,
-            std::result::Result<
-                std::result::Result<(CommandResponse, Option<SyncResponse>), ExecuteError>,
-                Status,
-            >,
-        >,
-    >,
+    /// The future to be polled.
+    fut: RequestFutureType<'a>,
+    /// The inner request, to be constructed to a [`Command`].
     inner: Option<xlineapi::PutRequest>,
+    /// The curp_client to be used for sending the request.
     curp_client: &'a Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
+    /// The token to be used for authentication.
     token: Option<&'a String>,
 }
 
@@ -109,6 +115,13 @@ impl<'a> PutFut<'a> {
     }
 }
 
+impl std::fmt::Debug for PutFut<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PutFut").finish()
+    }
+}
+
 impl Future for PutFut<'_> {
     type Output = Result<PutResponse>;
 
@@ -116,16 +129,29 @@ impl Future for PutFut<'_> {
     ///
     /// # panic
     ///
-    /// panic if inner is `None`.
+    /// panic if [`Self::inner`] is [`None`].
+    #[inline]
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         if self.fut.is_none() {
-            let cmd = Command::new(RequestWrapper::from(self.inner.take().unwrap()));
-            self.fut = Some(self.curp_client.propose(&cmd, self.token, true));
+            let cmd = Command::new(RequestWrapper::from(
+                self.inner
+                    .take()
+                    .unwrap_or_else(|| panic!("inner request should be constructed")),
+            ));
+            let client = Arc::clone(self.curp_client);
+            let token = self.token;
+            let fut = async move { client.propose(&cmd, token, true).await };
+            self.fut = Some(Box::pin(fut));
         }
-        match self.fut.as_mut().unwrap().poll_unpin(cx) {
+        match self
+            .fut
+            .as_mut()
+            .unwrap_or_else(|| unreachable!("`self.fut` must not be none"))
+            .poll_unpin(cx)
+        {
             // std::task::Poll::Ready(Ok(cmd_res)) => std::task::Poll::Ready(Ok(cmd_res??.into())),
             std::task::Poll::Ready(res) => std::task::Poll::Ready(Ok(res??.0.into_inner().into())),
             // std::task::Poll::Ready(Err(e)) => std::task::Poll::Ready(Err(e.into())),
@@ -586,18 +612,18 @@ pub struct TxnOp {
 
 impl TxnOp {
     /// Creates a `Put` operation.
-    // #[inline]
-    // #[must_use]
-    // pub fn put(key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
-    //     TxnOp {
-    //         inner: xlineapi::Request::RequestPut(
-    //             option
-    //                 .unwrap_or_default()
-    //                 .with_kv(key.into(), value.into())
-    //                 .into(),
-    //         ),
-    //     }
-    // }
+    #[inline]
+    #[must_use]
+    pub fn put(key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Self {
+        TxnOp {
+            inner: xlineapi::Request::RequestPut(
+                option
+                    .unwrap_or_default()
+                    .with_kv(key.into(), value.into())
+                    .into(),
+            ),
+        }
+    }
 
     /// Creates a `Range` operation.
     #[inline]

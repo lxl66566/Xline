@@ -76,23 +76,14 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     client.put("key1", "value1", None).await?;
-    ///     client.put("key1", "value1", PutOptions::default().with_prev_kv(true)).await?;
+    ///     client.put("key1", "value1").await?;
+    ///     client.put("key1", "value1").with_prev_kv(true).await?;
     ///
     ///     Ok(())
     /// }
     /// ```
     #[inline]
-    pub async fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut<'_> {
-        // let request = RequestWrapper::from(xlineapi::PutRequest::from(
-        //     option.unwrap_or_default().with_kv(key.into(), value.into()),
-        // ));
-        // let cmd = Command::new(request);
-        // let (cmd_res, _sync_res) = self
-        //     .curp_client
-        //     .propose(&cmd, self.token.as_ref(), true)
-        //     .await??;
-        // Ok(cmd_res.into_inner().into())
+    pub fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut<'_> {
         PutFut::new(
             &self.curp_client,
             self.token.as_ref(),

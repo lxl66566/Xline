@@ -187,7 +187,7 @@ mod tests {
     fn parse_op() {
         assert_eq!(
             parse_op_line(r#"put key1 "created-key1""#).unwrap(),
-            TxnOp::put("key1", "created-key1", None)
+            TxnOp::put("key1", "created-key1")
         );
         assert_eq!(
             parse_op_line(r"get key1 key11").unwrap(),

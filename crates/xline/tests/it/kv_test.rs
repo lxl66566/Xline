@@ -276,12 +276,12 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     let kvs = ["a", "b", "c", "d", "e"];
     for key in kvs {
-        client.put(key, "bar", None).await?;
+        client.put(key, "bar").await?;
     }
 
     let read_write_txn_req = TxnRequest::new()
         .when(&[Compare::value("b", CompareResult::Equal, "bar")][..])
-        .and_then(&[TxnOp::put("f", "foo", None)][..])
+        .and_then(&[TxnOp::put("f", "foo")][..])
         .or_else(&[TxnOp::range(RangeRequest::new("a"))][..]);
 
     let res = client.txn(read_write_txn_req).await?;
