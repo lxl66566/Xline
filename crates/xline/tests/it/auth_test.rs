@@ -36,7 +36,7 @@ async fn test_auth_empty_user_put() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
 
     enable_auth(client).await?;
-    let res = client.kv_client().put("foo", "bar", None).await;
+    let res = client.kv_client().put("foo", "bar").await;
     assert!(res.is_err());
 
     Ok(())
@@ -56,9 +56,9 @@ async fn test_auth_token_with_disable() -> Result<(), Box<dyn Error>> {
     )
     .await?;
     let kv_client = authed_client.kv_client();
-    kv_client.put("foo", "bar", None).await?;
+    kv_client.put("foo", "bar").await?;
     authed_client.auth_client().auth_disable().await?;
-    kv_client.put("foo", "bar", None).await?;
+    kv_client.put("foo", "bar").await?;
 
     Ok(())
 }
@@ -71,7 +71,7 @@ async fn test_auth_revision() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
     let auth_client = client.auth_client();
 
-    client.kv_client().put("foo", "bar", None).await?;
+    client.kv_client().put("foo", "bar").await?;
 
     let user_add_resp = auth_client
         .user_add(AuthUserAddRequest::new("root").with_pwd("123"))
@@ -90,10 +90,10 @@ async fn test_auth_non_authorized_rpcs() -> Result<(), Box<dyn Error>> {
     let client = cluster.client().await;
     let kv_client = client.kv_client();
 
-    let result = kv_client.put("foo", "bar", None).await;
+    let result = kv_client.put("foo", "bar").await;
     assert!(result.is_ok());
     enable_auth(client).await?;
-    let result = kv_client.put("foo", "bar", None).await;
+    let result = kv_client.put("foo", "bar").await;
     assert!(result.is_err());
 
     Ok(())
@@ -123,9 +123,9 @@ async fn test_kv_authorization() -> Result<(), Box<dyn Error>> {
     .await?
     .kv_client();
 
-    let result = u1_client.put("foo", "bar", None).await;
+    let result = u1_client.put("foo", "bar").await;
     assert!(result.is_ok());
-    let result = u1_client.put("fop", "bar", None).await;
+    let result = u1_client.put("fop", "bar").await;
     assert!(result.is_err());
 
     let result = u2_client

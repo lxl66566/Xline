@@ -12,48 +12,22 @@ use xline_test_utils::{
 #[tokio::test(flavor = "multi_thread")]
 #[abort_on_panic]
 async fn test_kv_put() -> Result<(), Box<dyn Error>> {
-    struct TestCase {
-        key: &'static str,
-        value: &'static str,
-        option: Option<PutFut>,
-        want_err: bool,
-    }
-
-    let tests = [
-        TestCase {
-            key: "foo",
-            value: "",
-            option: Some(PutFut::default().with_ignore_value(true)),
-            want_err: true,
-        },
-        TestCase {
-            key: "foo",
-            value: "bar",
-            option: None,
-            want_err: false,
-        },
-        TestCase {
-            key: "foo",
-            value: "",
-            option: Some(PutFut::default().with_ignore_value(true)),
-            want_err: false,
-        },
-        TestCase {
-            key: "foo",
-            value: "",
-            option: Some(PutFut::default().with_lease(12345)),
-            want_err: true,
-        },
-    ];
-
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
     let client = cluster.client().await.kv_client();
 
-    for test in tests {
-        let res = client.put(test.key, test.value, test.option).await;
-        assert_eq!(res.is_err(), test.want_err);
-    }
+    // 1
+    let res = client.put("foo", "").with_ignore_value(true).await;
+    assert!(res.is_err());
+    // 2
+    let res = client.put("foo", "bar").await;
+    assert!(!res.is_err());
+    // 3
+    let res = client.put("foo", "").with_ignore_value(true).await;
+    assert!(!res.is_err());
+    // 4
+    let res = client.put("foo", "").with_lease(12345).await;
+    assert!(res.is_err());
 
     Ok(())
 }
@@ -279,12 +253,14 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
         client.put(key, "bar").await?;
     }
 
-    let read_write_txn_req = TxnRequest::new()
+    // read_write_txn_request
+    let res = client
         .when(&[Compare::value("b", CompareResult::Equal, "bar")][..])
         .and_then(&[TxnOp::put("f", "foo")][..])
-        .or_else(&[TxnOp::range(RangeRequest::new("a"))][..]);
+        .or_else(&[TxnOp::range(RangeRequest::new("a"))][..])
+        .txn_exec()
+        .await?;
 
-    let res = client.txn(read_write_txn_req).await?;
     assert!(res.succeeded);
     assert_eq!(res.responses.len(), 1);
     assert!(matches!(
@@ -292,11 +268,14 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
         Some(Response::ResponsePut(_))
     ));
 
-    let read_only_txn = TxnRequest::new()
+    // read_only_txn
+    let mut res = client
         .when(&[Compare::version("b", CompareResult::Greater, 10)][..])
         .and_then(&[TxnOp::range(RangeRequest::new("a"))][..])
-        .or_else(&[TxnOp::range(RangeRequest::new("b"))][..]);
-    let mut res = client.txn(read_only_txn).await?;
+        .or_else(&[TxnOp::range(RangeRequest::new("b"))][..])
+        .txn_exec()
+        .await?;
+
     assert!(!res.succeeded);
     assert_eq!(res.responses.len(), 1);
 
@@ -315,11 +294,13 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
         unreachable!("response in a read_only_txn should not be None");
     };
 
-    let serializable_txn = TxnRequest::new()
-        .when([])
+    // serializable_txn
+    let mut res = client
         .and_then(&[TxnOp::range(RangeRequest::new("c").with_serializable(true))][..])
-        .or_else(&[TxnOp::range(RangeRequest::new("d").with_serializable(true))][..]);
-    let mut res = client.txn(serializable_txn).await?;
+        .or_else(&[TxnOp::range(RangeRequest::new("d").with_serializable(true))][..])
+        .txn_exec()
+        .await?;
+
     assert!(res.succeeded);
     assert_eq!(res.responses.len(), 1);
 

@@ -159,7 +159,7 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
 /// Execute the command
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let req = build_request(matches)?;
-    let resp = client.kv_client().txn(req).await?;
+    let resp = client.kv_client().txn_exec(req).await?;
     resp.print();
 
     Ok(())

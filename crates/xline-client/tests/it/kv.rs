@@ -181,7 +181,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
     // transaction 1
     {
         let resp = client
-            .txn(
+            .txn_exec(
                 TxnRequest::new()
                     .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
                     .and_then(
@@ -214,7 +214,7 @@ async fn txn_should_execute_as_expected() -> Result<()> {
     // transaction 2
     {
         let resp = client
-            .txn(
+            .txn_exec(
                 TxnRequest::new()
                     .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
                     .and_then(&[TxnOp::put("txn01", "02", None)][..])

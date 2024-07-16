@@ -89,7 +89,7 @@ impl XutexGuard {
     #[inline]
     #[must_use]
     pub fn txn_check_locked_key(&self) -> KvTxnRequest {
-        let mut txn_request = KvTxnRequest::new();
+        let mut txn_request = KvTxnRequest::default();
         #[allow(clippy::as_conversions)]
         let cmp = Compare {
             result: CompareResult::Greater as i32,

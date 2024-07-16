@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
         )])
         .or_else(&[]);
 
-    let _resp = kv_client.txn(txn_req).await?;
+    let _resp = kv_client.txn_exec(txn_req).await?;
 
     Ok(())
 }

@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
 
     // watch
     let (mut watcher, mut stream) = watch_client.watch(WatchRequest::new("key1")).await?;
-    kv_client.put("key1", "value1", None).await?;
+    kv_client.put("key1", "value1").await?;
 
     let resp = stream.message().await?.unwrap();
     let kv = resp.events[0].kv.as_ref().unwrap();
