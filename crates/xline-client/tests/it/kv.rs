@@ -3,8 +3,7 @@ use test_macros::abort_on_panic;
 use xline_client::{
     error::Result,
     types::kv::{
-        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest, TxnOp,
-        TxnRequest,
+        CompactionRequest, Compare, CompareResult, DeleteRangeRequest, RangeRequest, TxnOp,
     },
 };
 
@@ -16,13 +15,11 @@ async fn put_should_success_in_normal_path() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.kv_client();
 
-    client.put("put", "123", None).await?;
+    client.put("put", "123").await?;
 
     // overwrite with prev key
     {
-        let resp = client
-            .put("put", "456", Some(PutFut::default().with_prev_kv(true)))
-            .await?;
+        let resp = client.put("put", "456").with_prev_kv(true).await?;
         let prev_kv = resp.prev_kv;
         assert!(prev_kv.is_some());
         let prev_kv = prev_kv.unwrap();
@@ -32,9 +29,7 @@ async fn put_should_success_in_normal_path() -> Result<()> {
 
     // overwrite again with prev key
     {
-        let resp = client
-            .put("put", "456", Some(PutFut::default().with_prev_kv(true)))
-            .await?;
+        let resp = client.put("put", "456").with_prev_kv(true).await?;
         let prev_kv = resp.prev_kv;
         assert!(prev_kv.is_some());
         let prev_kv = prev_kv.unwrap();
@@ -51,10 +46,10 @@ async fn range_should_fetches_previously_put_keys() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.kv_client();
 
-    client.put("get10", "10", None).await?;
-    client.put("get11", "11", None).await?;
-    client.put("get20", "20", None).await?;
-    client.put("get21", "21", None).await?;
+    client.put("get10", "10").await?;
+    client.put("get11", "11").await?;
+    client.put("get20", "20").await?;
+    client.put("get21", "21").await?;
 
     // get key
     {
@@ -102,12 +97,12 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.kv_client();
 
-    client.put("del10", "10", None).await?;
-    client.put("del11", "11", None).await?;
-    client.put("del20", "20", None).await?;
-    client.put("del21", "21", None).await?;
-    client.put("del31", "31", None).await?;
-    client.put("del32", "32", None).await?;
+    client.put("del10", "10").await?;
+    client.put("del11", "11").await?;
+    client.put("del20", "20").await?;
+    client.put("del21", "21").await?;
+    client.put("del31", "31").await?;
+    client.put("del32", "32").await?;
 
     // delete key
     {
@@ -174,25 +169,17 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
 #[abort_on_panic]
 async fn txn_should_execute_as_expected() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
-    let client = client.kv_client();
+    let mut client = client.kv_client();
 
-    client.put("txn01", "01", None).await?;
+    client.put("txn01", "01").await?;
 
     // transaction 1
     {
         let resp = client
-            .txn_exec(
-                TxnRequest::new()
-                    .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
-                    .and_then(
-                        &[TxnOp::put(
-                            "txn01",
-                            "02",
-                            Some(PutFut::default().with_prev_kv(true)),
-                        )][..],
-                    )
-                    .or_else(&[TxnOp::range(RangeRequest::new("txn01"))][..]),
-            )
+            .when(Compare::value("txn01", CompareResult::Equal, "01"))
+            .and_then(|c| c.put("txn01", "02").with_prev_kv(true))
+            .or_else(|_| TxnOp::range(RangeRequest::new("txn01")))
+            .txn_exec()
             .await?;
 
         assert!(resp.succeeded);
@@ -214,12 +201,10 @@ async fn txn_should_execute_as_expected() -> Result<()> {
     // transaction 2
     {
         let resp = client
-            .txn_exec(
-                TxnRequest::new()
-                    .when(&[Compare::value("txn01", CompareResult::Equal, "01")][..])
-                    .and_then(&[TxnOp::put("txn01", "02", None)][..])
-                    .or_else(&[TxnOp::range(RangeRequest::new("txn01"))][..]),
-            )
+            .when(Compare::value("txn01", CompareResult::Equal, "01"))
+            .and_then(|c| c.put("txn01", "02"))
+            .or_else(|_| TxnOp::range(RangeRequest::new("txn01")))
+            .txn_exec()
             .await?;
 
         assert!(!resp.succeeded);
@@ -243,8 +228,8 @@ async fn compact_should_remove_previous_revision() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
     let client = client.kv_client();
 
-    client.put("compact", "0", None).await?;
-    client.put("compact", "1", None).await?;
+    client.put("compact", "0").await?;
+    client.put("compact", "1").await?;
 
     // before compacting
     let rev0_resp = client

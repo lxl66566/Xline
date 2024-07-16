@@ -3,8 +3,8 @@ use std::{error::Error, time::Duration};
 use test_macros::abort_on_panic;
 use xline_test_utils::{
     types::kv::{
-        Compare, CompareResult, DeleteRangeRequest, PutFut, RangeRequest, Response, SortOrder,
-        SortTarget, TxnOp, TxnRequest,
+        Compare, CompareResult, DeleteRangeRequest, RangeRequest, Response, SortOrder, SortTarget,
+        TxnOp,
     },
     Client, ClientOptions, Cluster,
 };
@@ -246,7 +246,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 async fn test_txn() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let client = cluster.client().await.kv_client();
+    let mut client = cluster.client().await.kv_client();
 
     let kvs = ["a", "b", "c", "d", "e"];
     for key in kvs {
@@ -255,9 +255,9 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     // read_write_txn_request
     let res = client
-        .when(&[Compare::value("b", CompareResult::Equal, "bar")][..])
-        .and_then(&[TxnOp::put("f", "foo")][..])
-        .or_else(&[TxnOp::range(RangeRequest::new("a"))][..])
+        .when(Compare::value("b", CompareResult::Equal, "bar"))
+        .and_then(|c| c.put("f", "foo"))
+        .or_else(|_| TxnOp::range(RangeRequest::new("a")))
         .txn_exec()
         .await?;
 
@@ -270,9 +270,9 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     // read_only_txn
     let mut res = client
-        .when(&[Compare::version("b", CompareResult::Greater, 10)][..])
-        .and_then(&[TxnOp::range(RangeRequest::new("a"))][..])
-        .or_else(&[TxnOp::range(RangeRequest::new("b"))][..])
+        .when(Compare::version("b", CompareResult::Greater, 10))
+        .and_then(|_| TxnOp::range(RangeRequest::new("a")))
+        .or_else(|_| TxnOp::range(RangeRequest::new("b")))
         .txn_exec()
         .await?;
 
@@ -296,8 +296,8 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     // serializable_txn
     let mut res = client
-        .and_then(&[TxnOp::range(RangeRequest::new("c").with_serializable(true))][..])
-        .or_else(&[TxnOp::range(RangeRequest::new("d").with_serializable(true))][..])
+        .and_then(|_| TxnOp::range(RangeRequest::new("c").with_serializable(true)))
+        .or_else(|_| TxnOp::range(RangeRequest::new("d").with_serializable(true)))
         .txn_exec()
         .await?;
 

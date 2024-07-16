@@ -21,13 +21,8 @@ async fn main() -> Result<()> {
 
     let txn_req = xutex_guard
         .txn_check_locked_key()
-        .when([Compare::value("key2", CompareResult::Equal, "value2")])
-        .and_then([TxnOp::put(
-            "key2",
-            "value3",
-            Some(PutFut::default().with_prev_kv(true)),
-        )])
-        .or_else(&[]);
+        .when(Compare::value("key2", CompareResult::Equal, "value2"))
+        .and_then(|c| c.put("key2", "value3").with_prev_kv(true));
 
     let _resp = kv_client.txn_exec(txn_req).await?;
 

@@ -14,7 +14,7 @@ async fn watch_should_receive_consistent_events() -> Result<()> {
 
     let (mut watcher, mut stream) = watch_client.watch(WatchRequest::new("watch01")).await?;
 
-    kv_client.put("watch01", "01", None).await?;
+    kv_client.put("watch01", "01").await?;
 
     let resp = stream.message().await?.unwrap();
     assert_eq!(resp.watch_id, watcher.watch_id());
@@ -43,7 +43,7 @@ async fn watch_stream_should_work_after_watcher_dropped() -> Result<()> {
 
     let (_, mut stream) = watch_client.watch(WatchRequest::new("watch01")).await?;
 
-    kv_client.put("watch01", "01", None).await?;
+    kv_client.put("watch01", "01").await?;
 
     let resp = stream.message().await?.unwrap();
     assert_eq!(resp.events.len(), 1);

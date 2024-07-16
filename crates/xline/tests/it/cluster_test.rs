@@ -38,7 +38,7 @@ async fn xline_add_node() -> Result<(), Box<dyn Error>> {
     let client = Client::connect(cluster.all_client_addrs(), ClientOptions::default()).await?;
     let mut cluster_client = client.cluster_client();
     let kv_client = client.kv_client();
-    _ = kv_client.put("key", "value", None).await?;
+    _ = kv_client.put("key", "value").await?;
     let new_node_peer_listener = TcpListener::bind("0.0.0.0:0").await?;
     let new_node_peer_urls = vec![format!("http://{}", new_node_peer_listener.local_addr()?)];
     let new_node_client_listener = TcpListener::bind("0.0.0.0:0").await?;

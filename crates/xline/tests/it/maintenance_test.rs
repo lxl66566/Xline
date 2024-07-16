@@ -24,7 +24,7 @@ async fn test_snapshot_and_restore() -> Result<(), Box<dyn std::error::Error>> {
         let mut cluster = Cluster::new_rocks(3).await;
         cluster.start().await;
         let client = cluster.client().await.kv_client();
-        let _ignore = client.put("key", "value", None).await?;
+        let _ignore = client.put("key", "value").await?;
         tokio::time::sleep(Duration::from_millis(100)).await; // TODO: use `propose_index` and remove this sleep after we finished our client.
         let mut maintenance_client =
             Client::connect(vec![cluster.get_client_url(0)], ClientOptions::default())
@@ -82,7 +82,7 @@ async fn test_alarm(idx: usize) {
     for i in 1..100u8 {
         let key: Vec<u8> = vec![i];
         let value: Vec<u8> = vec![i];
-        if let Err(err) = k_client.put(key, value, None).await {
+        if let Err(err) = k_client.put(key, value).await {
             assert!(matches!(
                 err,
                 XlineClientError::ExecuteError(ExecuteError::Nospace)

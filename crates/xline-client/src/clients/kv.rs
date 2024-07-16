@@ -88,7 +88,7 @@ impl KvClient {
     /// }
     /// ```
     #[inline]
-    pub fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut<'_> {
+    pub fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut {
         PutFut::new(
             Arc::clone(&self.curp_client),
             self.token.clone(),
@@ -232,43 +232,35 @@ impl KvClient {
             .await??;
         Ok(cmd_res.into_inner().into())
     }
-}
 
-// transaction
+    // transaction
 
-impl<'a: 'b, 'b> KvClient {
     /// Append a condition to the transaction `compare`
     #[inline]
-    pub fn when(&mut self, compares: impl Into<Vec<Compare>>) -> &mut Self {
-        let compares: Vec<_> = compares.into();
-        self.txn
-            .when(compares.into_iter().map(Into::into).collect::<Vec<_>>());
+    pub fn when(&mut self, compares: impl Into<Compare>) -> &mut Self {
+        self.txn.when(compares.into());
         self
     }
     /// Append a operation to the transaction `success`
     #[inline]
-    pub fn and_then<F, O, I>(&'a mut self, operations: F) -> &mut Self
+    pub fn and_then<F, O>(&mut self, operation: F) -> &mut Self
     where
         F: FnOnce(&mut Self) -> O,
-        O: Into<Vec<I>>,
-        I: Into<TxnOp<'a>>,
+        O: Into<TxnOp>,
     {
-        let temp: Vec<_> = operations(self).into();
-        self.txn
-            .and_then(temp.into_iter().map(Into::into).collect::<Vec<_>>());
+        let temp = operation(self).into();
+        self.txn.and_then(temp);
         self
     }
     /// Append a operation to the transaction `failure`
     #[inline]
-    pub fn or_else<F, O, I>(&mut self, operations: F) -> &mut Self
+    pub fn or_else<F, O>(&mut self, operation: F) -> &mut Self
     where
         F: FnOnce(&mut Self) -> O,
-        O: Into<Vec<I>>,
-        I: Into<TxnOp<'a>>,
+        O: Into<TxnOp>,
     {
-        let temp: Vec<_> = operations(self).into();
-        self.txn
-            .or_else(temp.into_iter().map(Into::into).collect::<Vec<_>>());
+        let temp = operation(self).into();
+        self.txn.or_else(temp);
         self
     }
     /// swap out self.txn with default value, to send the transaction stored in Self to cluster
