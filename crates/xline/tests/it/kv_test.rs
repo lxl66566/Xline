@@ -158,7 +158,7 @@ async fn test_kv_get() -> Result<(), Box<dyn Error>> {
     ];
 
     for key in kvs {
-        client.put(key, "bar", None).await?;
+        client.put(key, "bar").await?;
     }
 
     for test in tests {
@@ -185,7 +185,7 @@ async fn test_range_redirect() -> Result<(), Box<dyn Error>> {
     let kv_client = Client::connect([addr], ClientOptions::default())
         .await?
         .kv_client();
-    let _ignore = kv_client.put("foo", "bar", None).await?;
+    let _ignore = kv_client.put("foo", "bar").await?;
     tokio::time::sleep(Duration::from_millis(300)).await;
     let res = kv_client.range(RangeRequest::new("foo")).await?;
     assert_eq!(res.kvs.len(), 1);
@@ -249,7 +249,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 
     for test in tests {
         for key in keys {
-            client.put(key, "bar", None).await?;
+            client.put(key, "bar").await?;
         }
 
         let res = client.delete(test.req).await?;

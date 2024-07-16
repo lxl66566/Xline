@@ -15,16 +15,14 @@ pub use xlineapi::{
     RangeResponse, Response, ResponseOp, SortOrder, SortTarget, TargetUnion, TxnResponse,
 };
 
-/// The type of the future inside [`PutFut`].
-type RequestFutureType<'a> = Option<
-    BoxFuture<
-        'a,
-        std::result::Result<
-            std::result::Result<(CommandResponse, Option<SyncResponse>), ExecuteError>,
-            Status,
-        >,
-    >,
+/// The type of Response
+type ResponseType = std::result::Result<
+    std::result::Result<(CommandResponse, Option<SyncResponse>), ExecuteError>,
+    Status,
 >;
+
+/// The type of the future inside [`PutFut`].
+type RequestFutureType<'a> = Option<BoxFuture<'a, ResponseType>>;
 
 /// Future for `Put`, make it awaitable.
 ///
@@ -36,7 +34,7 @@ pub struct PutFut<'a> {
     /// The future to be polled.
     fut: RequestFutureType<'a>,
     /// The inner request, to be constructed to a [`Command`].
-    inner: Option<xlineapi::PutRequest>,
+    request: Option<xlineapi::PutRequest>,
     /// The curp_client to be used for sending the request.
     curp_client: &'a Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
     /// The token to be used for authentication.
@@ -58,7 +56,7 @@ impl<'a> PutFut<'a> {
             curp_client,
             token,
             fut: None,
-            inner: Some(xlineapi::PutRequest {
+            request: Some(xlineapi::PutRequest {
                 key,
                 value,
                 ..Default::default()
@@ -71,7 +69,7 @@ impl<'a> PutFut<'a> {
     #[inline]
     #[must_use]
     pub fn with_lease(mut self, lease: i64) -> Self {
-        self.inner = self.inner.map(|mut inner| {
+        self.request = self.request.map(|mut inner| {
             inner.lease = lease;
             inner
         });
@@ -83,7 +81,7 @@ impl<'a> PutFut<'a> {
     #[inline]
     #[must_use]
     pub fn with_prev_kv(mut self, prev_kv: bool) -> Self {
-        self.inner = self.inner.map(|mut inner| {
+        self.request = self.request.map(|mut inner| {
             inner.prev_kv = prev_kv;
             inner
         });
@@ -95,7 +93,7 @@ impl<'a> PutFut<'a> {
     #[inline]
     #[must_use]
     pub fn with_ignore_value(mut self, ignore_value: bool) -> Self {
-        self.inner = self.inner.map(|mut inner| {
+        self.request = self.request.map(|mut inner| {
             inner.ignore_value = ignore_value;
             inner
         });
@@ -107,18 +105,32 @@ impl<'a> PutFut<'a> {
     #[inline]
     #[must_use]
     pub fn with_ignore_lease(mut self, ignore_lease: bool) -> Self {
-        self.inner = self.inner.map(|mut inner| {
+        self.request = self.request.map(|mut inner| {
             inner.ignore_lease = ignore_lease;
             inner
         });
         self
+    }
+
+    #[inline]
+    pub fn construct_request(&self) -> impl Future<Output = ResponseType> {
+        let cmd = Command::new(RequestWrapper::from(
+            self.request
+                .take()
+                .unwrap_or_else(|| panic!("inner request should be constructed")),
+        ));
+        let client = Arc::clone(self.curp_client);
+        let token = self.token;
+        async move { client.propose(&cmd, token, true).await }
     }
 }
 
 impl std::fmt::Debug for PutFut<'_> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PutFut").finish()
+        f.debug_struct("PutFut")
+            .field("inner", &self.request)
+            .finish()
     }
 }
 
@@ -136,15 +148,7 @@ impl Future for PutFut<'_> {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         if self.fut.is_none() {
-            let cmd = Command::new(RequestWrapper::from(
-                self.inner
-                    .take()
-                    .unwrap_or_else(|| panic!("inner request should be constructed")),
-            ));
-            let client = Arc::clone(self.curp_client);
-            let token = self.token;
-            let fut = async move { client.propose(&cmd, token, true).await };
-            self.fut = Some(Box::pin(fut));
+            self.fut = Some(Box::pin(self.construct_request()));
         }
         match self
             .fut
@@ -603,14 +607,32 @@ impl Compare {
     }
 }
 
-/// Transaction operation.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxnOp {
-    /// The inner txn op request
-    inner: xlineapi::Request,
+/// The inner type of [`TxnOp`]
+#[derive(Debug, Clone, Copy)]
+enum TxnOpType<'a> {
+    Request(xlineapi::Request),
+    Future(RequestFutureType<'a>),
 }
 
-impl TxnOp {
+impl From<xlineapi::Request> for TxnOpType<'_> {
+    #[inline]
+    fn from(value: xlineapi::Request) -> Self {
+        Self::Request(value)
+    }
+}
+
+impl From<RequestFutureType<'_>> for TxnOpType<'_> {
+    #[inline]
+    fn from(value: RequestFutureType<'_>) -> Self {
+        Self::Future(value)
+    }
+}
+
+/// Transaction operation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TxnOp<'a>(TxnOpType<'a>);
+
+impl TxnOp<'_> {
     /// Creates a `Put` operation.
     #[inline]
     #[must_use]
