@@ -70,7 +70,7 @@ impl KvClient {
     /// # Examples
     ///
     /// ```no_run
-    /// use xline_client::{types::kv::PutOptions, Client, ClientOptions};
+    /// use xline_client::{Client, ClientOptions};
     /// use anyhow::Result;
     ///
     /// #[tokio::main]
@@ -193,8 +193,7 @@ impl KvClient {
     ///
     ///```no_run
     /// use xline_client::{
-    ///     types::kv::{CompactionRequest, PutRequest},
-    ///     Client, ClientOptions,
+    ///     types::kv::CompactionRequest, Client, ClientOptions,
     /// };
     /// use anyhow::Result;
     ///
@@ -206,7 +205,7 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///     let resp_put = client.put(PutRequest::new("key", "val")).await?;
+    ///     let resp_put = client.put("key", "val").await?;
     ///     let rev = resp_put.header.unwrap().revision;
     ///
     ///     let _resp = client.compact(CompactionRequest::new(rev)).await?;
@@ -233,7 +232,7 @@ impl KvClient {
         Ok(cmd_res.into_inner().into())
     }
 
-    // transaction
+    // region transaction
 
     /// Append a condition to the transaction `compare`
     #[inline]
@@ -241,7 +240,7 @@ impl KvClient {
         self.txn.when(compares.into());
         self
     }
-    /// Append a operation to the transaction `success`
+    /// Append an operation to the transaction `success`
     #[inline]
     pub fn and_then<F, O>(&mut self, operation: F) -> &mut Self
     where
@@ -252,7 +251,7 @@ impl KvClient {
         self.txn.and_then(temp);
         self
     }
-    /// Append a operation to the transaction `failure`
+    /// Append an operation to the transaction `failure`
     #[inline]
     pub fn or_else<F, O>(&mut self, operation: F) -> &mut Self
     where
@@ -263,11 +262,15 @@ impl KvClient {
         self.txn.or_else(temp);
         self
     }
+    /// swap out self.txn with given value
+    #[inline]
+    pub fn replace_txn(&mut self, txn: TxnRequest) -> TxnRequest {
+        std::mem::replace(&mut self.txn, txn)
+    }
     /// swap out self.txn with default value, to send the transaction stored in Self to cluster
     #[inline]
     pub fn replace_txn_with_default(&mut self) -> TxnRequest {
-        let default_value = TxnRequest::default();
-        std::mem::replace(&mut self.txn, default_value)
+        self.replace_txn(TxnRequest::default())
     }
 
     /// Send the transaction stored in Self to cluster, which can provide serializable writes
@@ -285,7 +288,7 @@ impl KvClient {
     ///
     /// ```no_run
     /// use xline_client::{
-    ///     types::kv::{Compare, PutRequest, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     types::kv::{Compare, RangeRequest, TxnOp, TxnRequest, CompareResult},
     ///     Client, ClientOptions,
     /// };
     /// use anyhow::Result;
@@ -298,12 +301,12 @@ impl KvClient {
     ///         .await?
     ///         .kv_client();
     ///
-    ///         
-    ///
     ///     let _resp = client
-    ///                 .when(&[Compare::value("key2", CompareResult::Equal, "value2")][..])
-    ///                 .and_then(|c| [c.put("key2", "value3").with_prev_kv(true)])
-    ///                 .or_else(|_| [TxnOp::range(RangeRequest::new("key2"))]).txn_exec().await?;
+    ///         .when(Compare::value("key2", CompareResult::Equal, "value2"))
+    ///         .and_then(|c| c.put("key2", "value3").with_prev_kv(true))
+    ///         .or_else(|_| TxnOp::range(RangeRequest::new("key2")))
+    ///         .txn_exec()
+    ///         .await?;
     ///
     ///     Ok(())
     /// }

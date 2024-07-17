@@ -517,7 +517,8 @@ impl From<DeleteRangeRequest> for xlineapi::DeleteRangeRequest {
 
 /// Transaction comparison.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Compare(pub(crate) xlineapi::Compare);
+#[non_exhaustive]
+pub struct Compare(pub xlineapi::Compare);
 
 impl Compare {
     /// Creates a new `Compare`.
@@ -615,7 +616,7 @@ impl Compare {
 pub enum TxnOp {
     /// Request, used by old version. the Request will be replaced later.
     Request(xlineapi::Request),
-    /// Future, used by new version
+    /// Future, used by new version (Put)
     Future(PutFut),
 }
 
@@ -681,6 +682,30 @@ pub struct TxnRequest {
 }
 
 impl TxnRequest {
+    /// Creates a new `TxnRequest`.
+    #[inline]
+    pub fn new(
+        compare: impl Into<Vec<Compare>>,
+        success: impl Into<Vec<TxnOp>>,
+        failure: impl Into<Vec<TxnOp>>,
+    ) -> Self {
+        let op_map = |op_vec: Vec<TxnOp>| {
+            op_vec
+                .into_iter()
+                .map(|o| xlineapi::RequestOp {
+                    request: Some(o.into()),
+                })
+                .collect()
+        };
+        Self {
+            inner: xlineapi::TxnRequest {
+                compare: compare.into().into_iter().map(|c| c.0).collect(),
+                success: op_map(success.into()),
+                failure: op_map(failure.into()),
+            },
+        }
+    }
+
     /// Takes a comparison and append it to inner compare Vec. If all comparisons passed in succeed,
     /// the operations passed into `and_then()` will be executed. Or the operations
     /// passed into `or_else()` will be executed.

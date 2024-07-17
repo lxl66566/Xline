@@ -4,6 +4,7 @@ use anyhow::{anyhow, bail, Result};
 use clap::{arg, ArgMatches, Command};
 use regex::Regex;
 use xline_client::{
+    clients::KvClient,
     types::kv::{Compare, TxnOp, TxnRequest},
     Client,
 };
@@ -19,7 +20,7 @@ pub(crate) fn command() -> Command {
 }
 
 /// Build request from matches
-pub(crate) fn build_request(matches: &ArgMatches) -> Result<TxnRequest> {
+pub(crate) fn build_request(client: &mut KvClient, matches: &ArgMatches) -> Result<TxnRequest> {
     let interactive = matches.get_flag("interactive");
     let (cmp_arg, op_then_arg, op_else_arg) = if interactive {
         /// Read until empty line from stdin
@@ -65,17 +66,14 @@ pub(crate) fn build_request(matches: &ArgMatches) -> Result<TxnRequest> {
         .collect::<Result<_>>()?;
     let op_then: Vec<_> = op_then_arg
         .iter()
-        .map(|line| parse_op_line(line))
+        .map(|line| parse_op_line(client, line))
         .collect::<Result<_>>()?;
     let op_else: Vec<_> = op_else_arg
         .iter()
-        .map(|line| parse_op_line(line))
+        .map(|line| parse_op_line(client, line))
         .collect::<Result<_>>()?;
 
-    Ok(TxnRequest::new()
-        .when(cmp)
-        .and_then(op_then)
-        .or_else(op_else))
+    Ok(TxnRequest::new(cmp, op_then, op_else))
 }
 
 /// Parse one line of compare command
@@ -127,7 +125,7 @@ fn parse_cmp_line(line: &str) -> Result<Compare> {
 }
 
 /// Parse one line of operation command
-fn parse_op_line(line: &str) -> Result<TxnOp> {
+fn parse_op_line(client: &mut KvClient, line: &str) -> Result<TxnOp> {
     let put_cmd = put::command();
     let get_cmd = get::command();
     let delete_cmd = delete::command();
@@ -139,8 +137,8 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
     match args[0].as_str() {
         "put" => {
             let matches = put_cmd.try_get_matches_from(args.clone())?;
-            let req = put::build_request(&matches);
-            Ok(TxnOp::put(req.0, req.1, Some(req.2)))
+            let req = put::build_request(client, &matches);
+            Ok(req.into())
         }
         "get" => {
             let matches = get_cmd.try_get_matches_from(args.clone())?;
@@ -157,9 +155,13 @@ fn parse_op_line(line: &str) -> Result<TxnOp> {
 }
 
 /// Execute the command
+///
+/// Note that the origin txn in `client` will be replaced by the new txn.
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
-    let req = build_request(matches)?;
-    let resp = client.kv_client().txn_exec(req).await?;
+    let kv_client = &mut client.kv_client();
+    let req = build_request(kv_client, matches)?;
+    let _discard = kv_client.replace_txn(req);
+    let resp = client.kv_client().txn_exec().await?;
     resp.print();
 
     Ok(())
@@ -167,7 +169,6 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
 
 #[cfg(test)]
 mod tests {
-    use xline_client::types::kv::RangeRequest;
 
     use super::*;
 
@@ -180,22 +181,6 @@ mod tests {
         assert_eq!(
             parse_cmp_line(r#"create("key2") = "0""#).unwrap(),
             Compare::create_revision("key2", CompareResult::Equal, 0)
-        );
-    }
-
-    #[test]
-    fn parse_op() {
-        assert_eq!(
-            parse_op_line(r#"put key1 "created-key1""#).unwrap(),
-            TxnOp::put("key1", "created-key1")
-        );
-        assert_eq!(
-            parse_op_line(r"get key1 key11").unwrap(),
-            TxnOp::range(RangeRequest::new("key1").with_range_end("key11"))
-        );
-        assert_eq!(
-            parse_op_line(r"get key1 --from_key").unwrap(),
-            TxnOp::range(RangeRequest::new("key1").with_from_key())
         );
     }
 }

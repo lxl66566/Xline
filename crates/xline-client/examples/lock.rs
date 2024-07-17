@@ -1,7 +1,7 @@
 use anyhow::Result;
 use xline_client::{
     clients::Xutex,
-    types::kv::{Compare, CompareResult, PutFut, TxnOp},
+    types::kv::{Compare, CompareResult},
     Client, ClientOptions,
 };
 
@@ -13,18 +13,20 @@ async fn main() -> Result<()> {
     let client = Client::connect(curp_members, ClientOptions::default()).await?;
 
     let lock_client = client.lock_client();
-    let kv_client = client.kv_client();
+    let mut kv_client = client.kv_client();
 
     let mut xutex = Xutex::new(lock_client, "lock-test", None, None).await?;
     // when the `xutex_guard` drop, the lock will be unlocked.
     let xutex_guard = xutex.lock_unsafe().await?;
 
-    let txn_req = xutex_guard
-        .txn_check_locked_key()
-        .when(Compare::value("key2", CompareResult::Equal, "value2"))
-        .and_then(|c| c.put("key2", "value3").with_prev_kv(true));
+    let lock_check = xutex_guard.txn_check_locked_key();
 
-    let _resp = kv_client.txn_exec(txn_req).await?;
+    let _resp = kv_client
+        .when(lock_check)
+        .when(Compare::value("key2", CompareResult::Equal, "value2"))
+        .and_then(|c| c.put("key2", "value3").with_prev_kv(true))
+        .txn_exec()
+        .await?;
 
     Ok(())
 }

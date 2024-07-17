@@ -1,13 +1,8 @@
 use anyhow::Result;
 use clap::{arg, value_parser, ArgMatches, Command};
-use xline_client::{types::kv::PutFut, Client};
+use xline_client::{clients::KvClient, types::kv::PutFut, Client};
 
 use crate::utils::printer::Printer;
-
-/// Indicates the type of the request builted.
-/// The first `Vec<u8>` is the key, the second `Vec<u8>` is the value,
-/// and the third is the options.
-type PutRequest = (Vec<u8>, Vec<u8>, PutFut);
 
 /// Definition of `get` command
 pub(crate) fn command() -> Command {
@@ -26,8 +21,8 @@ pub(crate) fn command() -> Command {
         .arg(arg!(--ignore_lease "updates the key using its current lease"))
 }
 
-/// Execute the command
-pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
+/// Build the request
+pub(crate) fn build_request(client: &mut KvClient, matches: &ArgMatches) -> PutFut {
     let key = matches.get_one::<String>("key").expect("required");
     let value = matches.get_one::<String>("value").expect("required");
     let lease = matches.get_one::<i64>("lease").expect("required");
@@ -35,16 +30,17 @@ pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result
     let ignore_value = matches.get_flag("ignore_value");
     let ignore_lease = matches.get_flag("ignore_lease");
 
-    let resp = client
-        .kv_client()
+    client
         .put(key.as_bytes().to_vec(), value.as_bytes().to_vec())
         .with_lease(*lease)
         .with_prev_kv(prev_kv)
         .with_ignore_value(ignore_value)
         .with_ignore_lease(ignore_lease)
-        .await?;
+}
 
+/// Execute the command
+pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
+    let resp = build_request(&mut client.kv_client(), matches).await?;
     resp.print();
-
     Ok(())
 }

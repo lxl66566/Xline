@@ -5,11 +5,7 @@ use etcd_client::{Client as EtcdClient, ConnectOptions};
 use thiserror::Error;
 #[cfg(test)]
 use xline_client::types::kv::{RangeRequest, RangeResponse};
-use xline_client::{
-    error::XlineClientError,
-    types::kv::{PutFut, PutResponse},
-    Client, ClientOptions,
-};
+use xline_client::{error::XlineClientError, types::kv::PutResponse, Client, ClientOptions};
 use xlineapi::command::Command;
 
 /// The client used in benchmark
@@ -86,7 +82,6 @@ impl BenchClient {
     }
 
     /// Send `PutRequest` by `XlineClient` or `EtcdClient`
-    /// A `PutRequest` is made by key, value and options.
     ///
     /// # Errors
     ///
@@ -94,22 +89,24 @@ impl BenchClient {
     #[inline]
     pub(crate) async fn put(
         &mut self,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        options: Option<PutFut>,
+        req: xlineapi::PutRequest,
     ) -> Result<PutResponse, BenchClientError> {
+        let req_clone = req.clone();
         match self.kv_client {
             KVClient::Xline(ref mut xline_client) => {
-                let response = xline_client.kv_client().put(key, value, options).await?;
+                let response = xline_client
+                    .kv_client()
+                    .put(req.key, req.value)
+                    .with_lease(req.lease)
+                    .with_prev_kv(req.prev_kv)
+                    .with_ignore_value(req.ignore_value)
+                    .with_ignore_lease(req.ignore_lease)
+                    .await?;
                 Ok(response)
             }
             KVClient::Etcd(ref mut etcd_client) => {
                 let response = etcd_client
-                    .put(
-                        key,
-                        value,
-                        Some(convert::put_req(&options.unwrap_or_default())),
-                    )
+                    .put(req.key, req.value, Some(convert::put_req(&req_clone)))
                     .await?;
                 Ok(convert::put_res(response))
             }
@@ -142,19 +139,18 @@ impl BenchClient {
 
 /// Convert utils
 mod convert {
-    use xline_client::types::kv::PutFut;
-    use xlineapi::{KeyValue, PutResponse, ResponseHeader};
+    use xlineapi::{KeyValue, PutRequest, PutResponse, ResponseHeader};
 
     /// transform `xline_client::types::kv::PutOptions` into `etcd_client::PutOptions`
-    pub(super) fn put_req(req: &PutFut) -> etcd_client::PutOptions {
-        let mut opts = etcd_client::PutOptions::new().with_lease(req.lease());
-        if req.prev_kv() {
+    pub(super) fn put_req(req: &PutRequest) -> etcd_client::PutOptions {
+        let mut opts = etcd_client::PutOptions::new().with_lease(req.lease);
+        if req.prev_kv {
             opts = opts.with_prev_key();
         }
-        if req.ignore_value() {
+        if req.ignore_value {
             opts = opts.with_ignore_value();
         }
-        if req.ignore_lease() {
+        if req.ignore_lease {
             opts = opts.with_ignore_lease();
         }
         opts
@@ -217,6 +213,7 @@ mod convert {
 mod test {
     use xline_client::types::kv::RangeRequest;
     use xline_test_utils::Cluster;
+    use xlineapi::PutRequest;
 
     use crate::bench_client::{BenchClient, ClientOptions};
 
@@ -230,8 +227,14 @@ mod test {
         let mut client = BenchClient::new(cluster.all_client_addrs(), use_curp_client, config)
             .await
             .unwrap();
-        //check xline client put value exist
-        let _put_response = client.put("put", "123", None).await;
+        // check xline client put value exist
+        let _put_response = client
+            .put(PutRequest {
+                key: "put".into(),
+                value: "123".into(),
+                ..Default::default()
+            })
+            .await;
         let range_request = RangeRequest::new("put");
         let response = client.get(range_request).await.unwrap();
         assert_eq!(response.kvs[0].value, b"123");
@@ -247,7 +250,13 @@ mod test {
             .await
             .unwrap();
 
-        let _put_response = client.put("put", "123", None).await;
+        let _put_response = client
+            .put(PutRequest {
+                key: "put".into(),
+                value: "123".into(),
+                ..Default::default()
+            })
+            .await;
         let range_request = RangeRequest::new("put");
         let response = client.get(range_request).await.unwrap();
         assert_eq!(response.kvs[0].value, b"123");
