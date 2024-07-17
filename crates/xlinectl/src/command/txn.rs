@@ -160,8 +160,11 @@ fn parse_op_line(client: &mut KvClient, line: &str) -> Result<TxnOp> {
 pub(crate) async fn execute(client: &mut Client, matches: &ArgMatches) -> Result<()> {
     let kv_client = &mut client.kv_client();
     let req = build_request(kv_client, matches)?;
-    let _discard = kv_client.replace_txn(req);
-    let resp = client.kv_client().txn_exec().await?;
+
+    // start a new transaction and put the constructed request into it
+    let mut txn_builder = kv_client.txn_start();
+    let _discard = txn_builder.replace_txn(req);
+    let resp = txn_builder.txn_exec().await?;
     resp.print();
 
     Ok(())

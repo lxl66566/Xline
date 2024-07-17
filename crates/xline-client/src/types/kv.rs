@@ -1,13 +1,13 @@
 use crate::error::Result;
+use core::fmt;
 use curp::client::ClientApi;
 use futures::FutureExt;
-use pin_project::pin_project;
 use std::future::Future;
 use std::pin::Pin;
-use std::{pin::pin, sync::Arc};
+use std::sync::Arc;
 use tonic::Status;
 use xlineapi::{
-    command::{Command, CommandResponse, KeyRange, SyncResponse},
+    command::{Command, CommandResponse, CurpClient, KeyRange, SyncResponse},
     execute_error::ExecuteError,
     RequestWrapper,
 };
@@ -30,9 +30,7 @@ type RequestFutureType = Option<Pin<Box<dyn Future<Output = ResponseType> + Send
 ///
 /// Before first poll, fut will be [`Option::None`].
 /// Once It's been polled, fut will be [`Option::Some`] and inner will be [`Option::None`].
-#[pin_project]
 pub struct PutFut {
-    #[pin]
     /// The future to be polled.
     fut: RequestFutureType,
     /// The inner request, to be constructed to a [`Command`].
@@ -706,31 +704,38 @@ impl TxnRequest {
         }
     }
 
-    /// Takes a comparison and append it to inner compare Vec. If all comparisons passed in succeed,
+    /// Takes comparisons and extend it to inner compare Vec. If all comparisons passed in succeed,
     /// the operations passed into `and_then()` will be executed. Or the operations
     /// passed into `or_else()` will be executed.
     #[inline]
-    pub fn when(&mut self, compare: impl Into<Compare>) {
-        self.inner.compare.push(compare.into().0);
+    pub fn when<I: Into<Compare>>(&mut self, compares: impl Into<Vec<I>>) {
+        self.inner
+            .compare
+            .extend(compares.into().into_iter().map(|cmp| cmp.into().0));
     }
 
-    /// Append an operation to inner success Vec. The operations list will be executed,
+    /// Append operations to inner success Vec. The operations list will be executed,
     /// if the comparisons passed in `when()` succeed.
     #[inline]
-    pub fn and_then(&mut self, operation: impl Into<TxnOp>) {
-        let temp = operation.into();
-        self.inner.success.push(xlineapi::RequestOp {
-            request: Some(temp.into()),
-        });
+    pub fn and_then<I: Into<TxnOp>>(&mut self, operations: impl Into<Vec<I>>) {
+        let temp: Vec<_> = operations.into();
+        self.inner
+            .success
+            .extend(temp.into_iter().map(|op| xlineapi::RequestOp {
+                request: Some(op.into().into()),
+            }));
     }
 
-    /// Append an operation to inner failure Vec. The operations list will be executed, if the
+    /// Append operations to inner failure Vec. The operations list will be executed, if the
     /// comparisons passed in `when()` fail.
     #[inline]
-    pub fn or_else(&mut self, operation: impl Into<TxnOp>) {
-        self.inner.failure.push(xlineapi::RequestOp {
-            request: Some(operation.into().into()),
-        });
+    pub fn or_else<I: Into<TxnOp>>(&mut self, operations: impl Into<Vec<I>>) {
+        let temp: Vec<_> = operations.into();
+        self.inner
+            .failure
+            .extend(temp.into_iter().map(|op| xlineapi::RequestOp {
+                request: Some(op.into().into()),
+            }));
     }
 }
 
@@ -738,6 +743,151 @@ impl From<TxnRequest> for xlineapi::TxnRequest {
     #[inline]
     fn from(txn: TxnRequest) -> Self {
         txn.inner
+    }
+}
+
+/// Transaction Builder
+pub struct TxnBuilder {
+    /// TxnRequest
+    txn_req: TxnRequest,
+    /// The client running the CURP protocol, communicate with all servers.
+    curp_client: Arc<CurpClient>,
+    /// The auth token
+    token: Option<String>,
+}
+
+impl TxnBuilder {
+    /// Create a new `TxnBuilder`
+    ///
+    #[inline]
+    pub fn new(curp_client: Arc<CurpClient>, token: Option<String>) -> Self {
+        Self {
+            txn_req: TxnRequest::default(),
+            curp_client,
+            token,
+        }
+    }
+    /// Append a set of conditions to the transaction `compare` Vec.
+    ///
+    /// If all comparisons passed in succeed, the operations passed into `and_then()` will be executed.
+    /// Otherwise the operations passed into `or_else()` will be executed.
+    #[inline]
+    pub fn when<I>(&mut self, compares: impl Into<Vec<I>>) -> &mut Self
+    where
+        I: Into<Compare>,
+    {
+        self.txn_req.when(compares.into());
+        self
+    }
+    /// Append operations to the transaction `success`
+    #[inline]
+    pub fn and_then<F, O, I>(&mut self, operations: F) -> &mut Self
+    where
+        F: FnOnce(&mut Self) -> O,
+        O: Into<Vec<I>>,
+        I: Into<TxnOp>,
+    {
+        let temp: Vec<_> = operations(self).into();
+        self.txn_req.and_then(temp);
+        self
+    }
+    /// Append operations to the transaction `failure`
+    #[inline]
+    pub fn or_else<F, O, I>(&mut self, operations: F) -> &mut Self
+    where
+        F: FnOnce(&mut Self) -> O,
+        O: Into<Vec<I>>,
+        I: Into<TxnOp>,
+    {
+        let temp: Vec<_> = operations(self).into();
+        self.txn_req.or_else(temp);
+        self
+    }
+    /// swap out self.txn with given value
+    #[inline]
+    pub fn replace_txn(&mut self, txn: TxnRequest) -> TxnRequest {
+        std::mem::replace(&mut self.txn_req, txn)
+    }
+    /// swap out self.txn with default value, to send the transaction stored in Self to cluster
+    #[inline]
+    pub fn replace_txn_with_default(&mut self) -> TxnRequest {
+        self.replace_txn(TxnRequest::default())
+    }
+
+    /// Send the transaction stored in Self to cluster, which can provide serializable writes
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if the inner CURP client encountered a propose failure
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the transaction is empty, that is the `when`,
+    /// `and_then` and `or_else` has not been called since last `txn` called.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use xline_client::{
+    ///     types::kv::{Compare, RangeRequest, TxnOp, TxnRequest, CompareResult},
+    ///     Client, ClientOptions,
+    /// };
+    /// use anyhow::Result;
+    ///
+    /// #[tokio::main]
+    /// async fn main() -> Result<()> {
+    ///     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
+    ///
+    ///     let mut client = Client::connect(curp_members, ClientOptions::default())
+    ///         .await?
+    ///         .kv_client();
+    ///
+    ///     let _resp = client
+    ///         .txn_start()
+    ///         .when([Compare::value("key2", CompareResult::Equal, "value2")])
+    ///         .and_then(|c| [c.put("key2", "value3").with_prev_kv(true)])
+    ///         .or_else(|_| [TxnOp::range(RangeRequest::new("key2"))])
+    ///         .txn_exec()
+    ///         .await?;
+    ///
+    ///     Ok(())
+    /// }
+    /// ```
+    #[inline]
+    pub async fn txn_exec(&mut self) -> Result<TxnResponse> {
+        let request = self.replace_txn_with_default();
+        let request = RequestWrapper::from(xlineapi::TxnRequest::from(request));
+        let cmd = Command::new(request);
+        let (cmd_res, Some(sync_res)) = self
+            .curp_client
+            .propose(&cmd, self.token.as_ref(), false)
+            .await??
+        else {
+            unreachable!("sync_res is always Some when use_fast_path is false");
+        };
+        let mut res_wrapper = cmd_res.into_inner();
+        res_wrapper.update_revision(sync_res.revision());
+        Ok(res_wrapper.into())
+    }
+
+    /// Put command for transaction
+    #[inline]
+    pub fn put(&self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> PutFut {
+        PutFut::new(
+            Arc::clone(&self.curp_client),
+            self.token.clone(),
+            key.into(),
+            value.into(),
+        )
+    }
+}
+
+impl fmt::Debug for TxnBuilder {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TxnBuilder")
+            .field("request", &self.txn_req)
+            .finish_non_exhaustive()
     }
 }
 

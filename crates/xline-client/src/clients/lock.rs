@@ -281,9 +281,9 @@ impl Xutex {
     ///     let xutex_guard = xutex.lock_unsafe().await?;
     ///
     ///     let _resp = kv_client
-    ///         .when(xutex_guard.txn_check_locked_key())
-    ///         .when(Compare::value("key2", CompareResult::Equal, "value2"))
-    ///         .and_then(|c| c.put("key2", "value3").with_prev_kv(true))
+    ///         .txn_start()
+    ///         .when([xutex_guard.txn_check_locked_key(), Compare::value("key2", CompareResult::Equal, "value2")])
+    ///         .and_then(|c| [c.put("key2", "value3").with_prev_kv(true)])
     ///         .txn_exec()
     ///         .await?;
     ///

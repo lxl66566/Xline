@@ -246,7 +246,7 @@ async fn test_kv_delete() -> Result<(), Box<dyn Error>> {
 async fn test_txn() -> Result<(), Box<dyn Error>> {
     let mut cluster = Cluster::new(3).await;
     cluster.start().await;
-    let mut client = cluster.client().await.kv_client();
+    let client = cluster.client().await.kv_client();
 
     let kvs = ["a", "b", "c", "d", "e"];
     for key in kvs {
@@ -255,9 +255,10 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     // read_write_txn_request
     let res = client
-        .when(Compare::value("b", CompareResult::Equal, "bar"))
-        .and_then(|c| c.put("f", "foo"))
-        .or_else(|_| TxnOp::range(RangeRequest::new("a")))
+        .txn_start()
+        .when([Compare::value("b", CompareResult::Equal, "bar")])
+        .and_then(|c| [c.put("f", "foo")])
+        .or_else(|_| [TxnOp::range(RangeRequest::new("a"))])
         .txn_exec()
         .await?;
 
@@ -270,9 +271,10 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     // read_only_txn
     let mut res = client
-        .when(Compare::version("b", CompareResult::Greater, 10))
-        .and_then(|_| TxnOp::range(RangeRequest::new("a")))
-        .or_else(|_| TxnOp::range(RangeRequest::new("b")))
+        .txn_start()
+        .when([Compare::version("b", CompareResult::Greater, 10)])
+        .and_then(|_| [TxnOp::range(RangeRequest::new("a"))])
+        .or_else(|_| [TxnOp::range(RangeRequest::new("b"))])
         .txn_exec()
         .await?;
 
@@ -296,8 +298,9 @@ async fn test_txn() -> Result<(), Box<dyn Error>> {
 
     // serializable_txn
     let mut res = client
-        .and_then(|_| TxnOp::range(RangeRequest::new("c").with_serializable(true)))
-        .or_else(|_| TxnOp::range(RangeRequest::new("d").with_serializable(true)))
+        .txn_start()
+        .and_then(|_| [TxnOp::range(RangeRequest::new("c").with_serializable(true))])
+        .or_else(|_| [TxnOp::range(RangeRequest::new("d").with_serializable(true))])
         .txn_exec()
         .await?;
 

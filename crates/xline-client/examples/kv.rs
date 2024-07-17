@@ -11,13 +11,18 @@ async fn main() -> Result<()> {
     // the name and address of all curp members
     let curp_members = ["10.0.0.1:2379", "10.0.0.2:2379", "10.0.0.3:2379"];
 
-    let mut client = Client::connect(curp_members, ClientOptions::default())
+    let client = Client::connect(curp_members, ClientOptions::default())
         .await?
         .kv_client();
 
     // put
-    client.put("key1", "value1").await?;
-    client.put("key2", "value2").await?;
+    let _resp = client.put("key1", "value1").await?;
+    let _resp = client.put("key2", "value2").with_lease(0).await?;
+    let _resp = client
+        .put("key3", "value3")
+        .with_lease(0)
+        .with_prev_kv(true)
+        .await?;
 
     // range
     let resp = client.range(RangeRequest::new("key1")).await?;
@@ -45,9 +50,15 @@ async fn main() -> Result<()> {
 
     // txn
     let _resp = client
-        .when(Compare::value("key2", CompareResult::Equal, "value2"))
-        .and_then(|c| c.put("key2", "value3").with_prev_kv(true))
-        .or_else(|_| TxnOp::range(RangeRequest::new("key2")))
+        .txn_start()
+        .when([Compare::value("key2", CompareResult::Equal, "value2")])
+        .and_then(|c| {
+            [
+                c.put("key2", "value3").with_prev_kv(true),
+                c.put("key3", "value3"),
+            ]
+        })
+        .or_else(|_| [TxnOp::range(RangeRequest::new("key2"))])
         .txn_exec()
         .await?;
 

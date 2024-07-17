@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     let client = Client::connect(curp_members, ClientOptions::default()).await?;
 
     let lock_client = client.lock_client();
-    let mut kv_client = client.kv_client();
+    let kv_client = client.kv_client();
 
     let mut xutex = Xutex::new(lock_client, "lock-test", None, None).await?;
     // when the `xutex_guard` drop, the lock will be unlocked.
@@ -22,9 +22,12 @@ async fn main() -> Result<()> {
     let lock_check = xutex_guard.txn_check_locked_key();
 
     let _resp = kv_client
-        .when(lock_check)
-        .when(Compare::value("key2", CompareResult::Equal, "value2"))
-        .and_then(|c| c.put("key2", "value3").with_prev_kv(true))
+        .txn_start()
+        .when([
+            lock_check,
+            Compare::value("key2", CompareResult::Equal, "value2"),
+        ])
+        .and_then(|c| [c.put("key2", "value3").with_prev_kv(true)])
         .txn_exec()
         .await?;
 

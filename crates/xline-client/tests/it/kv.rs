@@ -169,16 +169,17 @@ async fn delete_should_remove_previously_put_kvs() -> Result<()> {
 #[abort_on_panic]
 async fn txn_should_execute_as_expected() -> Result<()> {
     let (_cluster, client) = get_cluster_client().await.unwrap();
-    let mut client = client.kv_client();
+    let client = client.kv_client();
 
     client.put("txn01", "01").await?;
 
     // transaction 1
     {
         let resp = client
-            .when(Compare::value("txn01", CompareResult::Equal, "01"))
-            .and_then(|c| c.put("txn01", "02").with_prev_kv(true))
-            .or_else(|_| TxnOp::range(RangeRequest::new("txn01")))
+            .txn_start()
+            .when([Compare::value("txn01", CompareResult::Equal, "01")])
+            .and_then(|c| [c.put("txn01", "02").with_prev_kv(true)])
+            .or_else(|_| [TxnOp::range(RangeRequest::new("txn01"))])
             .txn_exec()
             .await?;
 
@@ -201,9 +202,10 @@ async fn txn_should_execute_as_expected() -> Result<()> {
     // transaction 2
     {
         let resp = client
-            .when(Compare::value("txn01", CompareResult::Equal, "01"))
-            .and_then(|c| c.put("txn01", "02"))
-            .or_else(|_| TxnOp::range(RangeRequest::new("txn01")))
+            .txn_start()
+            .when([Compare::value("txn01", CompareResult::Equal, "01")])
+            .and_then(|c| [c.put("txn01", "02")])
+            .or_else(|_| [TxnOp::range(RangeRequest::new("txn01"))])
             .txn_exec()
             .await?;
 
