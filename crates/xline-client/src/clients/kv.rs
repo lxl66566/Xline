@@ -97,6 +97,17 @@ impl KvClient {
         )
     }
 
+    /// Provides compatibility with older versions, mainly for simulation, tests and benchmarking.
+    #[inline]
+    #[must_use]
+    pub fn put_request(&self, req: xlineapi::PutRequest) -> PutFut {
+        self.put(req.key, req.value)
+            .with_lease(req.lease)
+            .with_prev_kv(req.prev_kv)
+            .with_ignore_value(req.ignore_value)
+            .with_ignore_lease(req.ignore_lease)
+    }
+
     /// Get a range of keys from the store
     ///
     /// # Errors

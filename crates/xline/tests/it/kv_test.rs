@@ -21,10 +21,10 @@ async fn test_kv_put() -> Result<(), Box<dyn Error>> {
     assert!(res.is_err());
     // 2
     let res = client.put("foo", "bar").await;
-    assert!(!res.is_err());
+    assert!(res.is_ok());
     // 3
     let res = client.put("foo", "").with_ignore_value(true).await;
-    assert!(!res.is_err());
+    assert!(res.is_ok());
     // 4
     let res = client.put("foo", "").with_lease(12345).await;
     assert!(res.is_err());

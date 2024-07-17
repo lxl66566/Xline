@@ -16,7 +16,13 @@ async fn basic_put() {
     init_logger();
     let group = XlineGroup::new(3).await;
     let client = group.client().await;
-    let res = client.put("key", "value", None).await;
+    let res = client
+        .put(xlineapi::PutRequest {
+            key: "key".into(),
+            value: "value".into(),
+            ..Default::default()
+        })
+        .await;
     assert!(res.is_ok());
 }
 
@@ -29,7 +35,13 @@ async fn watch_compacted_revision_should_receive_canceled_response() {
     let client = SimEtcdClient::new(watch_addr, group.client_handle.clone()).await;
 
     for i in 1..=6 {
-        let result = client.put("key", format!("value{}", i), None).await;
+        let result = client
+            .put(xlineapi::PutRequest {
+                key: "key".into(),
+                value: format!("value{}", i).into(),
+                ..Default::default()
+            })
+            .await;
         assert!(result.is_ok());
     }
 

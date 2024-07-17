@@ -94,14 +94,7 @@ impl BenchClient {
         let req_clone = req.clone();
         match self.kv_client {
             KVClient::Xline(ref mut xline_client) => {
-                let response = xline_client
-                    .kv_client()
-                    .put(req.key, req.value)
-                    .with_lease(req.lease)
-                    .with_prev_kv(req.prev_kv)
-                    .with_ignore_value(req.ignore_value)
-                    .with_ignore_lease(req.ignore_lease)
-                    .await?;
+                let response = xline_client.kv_client().put_request(req).await?;
                 Ok(response)
             }
             KVClient::Etcd(ref mut etcd_client) => {

@@ -13,10 +13,7 @@ use xline_client::{
     error::XlineClientError,
     types::{
         cluster::{MemberAddRequest, MemberAddResponse, MemberListRequest, MemberListResponse},
-        kv::{
-            CompactionRequest, CompactionResponse, PutOptions, PutResponse, RangeRequest,
-            RangeResponse,
-        },
+        kv::{CompactionRequest, CompactionResponse, PutResponse, RangeRequest, RangeResponse},
         watch::{WatchRequest, WatchStreaming, Watcher},
     },
     Client, ClientOptions,
@@ -177,15 +174,11 @@ macro_rules! impl_client_method {
 impl SimClient {
     pub async fn put(
         &self,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        option: Option<PutOptions>,
+        req: xlineapi::PutRequest,
     ) -> Result<PutResponse, XlineClientError<Command>> {
         let client = self.inner.clone();
-        let key = key.into();
-        let value = value.into();
         self.handle
-            .spawn(async move { client.kv_client().put(key, value, option).await })
+            .spawn(client.kv_client().put_request(req))
             .await
             .unwrap()
     }
@@ -239,19 +232,13 @@ impl SimEtcdClient {
 
     pub async fn put(
         &self,
-        key: impl Into<Vec<u8>>,
-        value: impl Into<Vec<u8>>,
-        option: Option<PutOptions>,
+        req: xlineapi::PutRequest,
     ) -> Result<PutResponse, XlineClientError<Command>> {
         let mut client = self.kv.clone();
-        let key = key.into();
-        let value = value.into();
         self.handle
             .spawn(async move {
                 client
-                    .put(xlineapi::PutRequest::from(
-                        option.unwrap_or_default().with_kv(key, value),
-                    ))
+                    .put(req)
                     .await
                     .map(|r| r.into_inner())
                     .map_err(Into::into)
