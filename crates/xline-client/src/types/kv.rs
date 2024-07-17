@@ -30,7 +30,7 @@ type RequestFutureType = Option<Pin<Box<dyn Future<Output = ResponseType> + Send
 ///
 /// Before first poll, fut will be [`Option::None`].
 /// Once It's been polled, fut will be [`Option::Some`] and inner will be [`Option::None`].
-pub struct PutFut {
+pub struct PutFut<'a> {
     /// The future to be polled.
     fut: RequestFutureType,
     /// The inner request, to be constructed to a [`Command`].
@@ -39,9 +39,11 @@ pub struct PutFut {
     curp_client: Arc<dyn ClientApi<Error = Status, Cmd = Command> + Send + Sync>,
     /// The token to be used for authentication.
     token: Option<String>,
+    /// marker for lifetime
+    _phantom: std::marker::PhantomData<&'a ()>,
 }
 
-impl PutFut {
+impl PutFut<'_> {
     #[inline]
     #[must_use]
     /// `key` is the key, in bytes, to put into the key-value store.
@@ -61,6 +63,7 @@ impl PutFut {
                 value,
                 ..Default::default()
             }),
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -119,7 +122,7 @@ impl PutFut {
     }
 }
 
-impl std::fmt::Debug for PutFut {
+impl std::fmt::Debug for PutFut<'_> {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PutFut")
@@ -128,7 +131,7 @@ impl std::fmt::Debug for PutFut {
     }
 }
 
-impl Future for PutFut {
+impl Future for PutFut<'_> {
     type Output = Result<PutResponse>;
 
     /// Poll the inner future constructed by [`xlineapi::PutRequest`].
@@ -611,28 +614,28 @@ impl Compare {
 /// Transaction operation
 #[derive(Debug)]
 #[non_exhaustive]
-pub enum TxnOp {
+pub enum TxnOp<'a> {
     /// Request, used by old version. the Request will be replaced later.
     Request(xlineapi::Request),
     /// Future, used by new version (Put)
-    Future(PutFut),
+    Future(PutFut<'a>),
 }
 
-impl From<xlineapi::Request> for TxnOp {
+impl From<xlineapi::Request> for TxnOp<'_> {
     #[inline]
     fn from(value: xlineapi::Request) -> Self {
         Self::Request(value)
     }
 }
 
-impl From<PutFut> for TxnOp {
+impl<'a> From<PutFut<'a>> for TxnOp<'a> {
     #[inline]
-    fn from(value: PutFut) -> Self {
+    fn from(value: PutFut<'a>) -> Self {
         Self::Future(value)
     }
 }
 
-impl From<TxnOp> for xlineapi::Request {
+impl From<TxnOp<'_>> for xlineapi::Request {
     #[inline]
     fn from(value: TxnOp) -> Self {
         match value {
@@ -649,7 +652,7 @@ impl From<TxnOp> for xlineapi::Request {
 // #[derive(Debug, Clone, PartialEq)]
 // pub struct TxnOp<'a>(TxnOp<'a>);
 
-impl TxnOp {
+impl TxnOp<'_> {
     /// Creates a `Range` operation.
     #[inline]
     #[must_use]
@@ -682,12 +685,12 @@ pub struct TxnRequest {
 impl TxnRequest {
     /// Creates a new `TxnRequest`.
     #[inline]
-    pub fn new(
+    pub fn new<'a>(
         compare: impl Into<Vec<Compare>>,
-        success: impl Into<Vec<TxnOp>>,
-        failure: impl Into<Vec<TxnOp>>,
+        success: impl Into<Vec<TxnOp<'a>>>,
+        failure: impl Into<Vec<TxnOp<'a>>>,
     ) -> Self {
-        let op_map = |op_vec: Vec<TxnOp>| {
+        let op_map = |op_vec: Vec<TxnOp<'a>>| {
             op_vec
                 .into_iter()
                 .map(|o| xlineapi::RequestOp {
@@ -717,7 +720,7 @@ impl TxnRequest {
     /// Append operations to inner success Vec. The operations list will be executed,
     /// if the comparisons passed in `when()` succeed.
     #[inline]
-    pub fn and_then<I: Into<TxnOp>>(&mut self, operations: impl Into<Vec<I>>) {
+    pub fn and_then<'a, I: Into<TxnOp<'a>>>(&mut self, operations: impl Into<Vec<I>>) {
         let temp: Vec<_> = operations.into();
         self.inner
             .success
@@ -729,7 +732,7 @@ impl TxnRequest {
     /// Append operations to inner failure Vec. The operations list will be executed, if the
     /// comparisons passed in `when()` fail.
     #[inline]
-    pub fn or_else<I: Into<TxnOp>>(&mut self, operations: impl Into<Vec<I>>) {
+    pub fn or_else<'a, I: Into<TxnOp<'a>>>(&mut self, operations: impl Into<Vec<I>>) {
         let temp: Vec<_> = operations.into();
         self.inner
             .failure
@@ -781,11 +784,11 @@ impl TxnBuilder {
     }
     /// Append operations to the transaction `success`
     #[inline]
-    pub fn and_then<F, O, I>(&mut self, operations: F) -> &mut Self
+    pub fn and_then<'a, F, O, I>(&mut self, operations: F) -> &mut Self
     where
         F: FnOnce(&mut Self) -> O,
         O: Into<Vec<I>>,
-        I: Into<TxnOp>,
+        I: Into<TxnOp<'a>>,
     {
         let temp: Vec<_> = operations(self).into();
         self.txn_req.and_then(temp);
@@ -793,11 +796,11 @@ impl TxnBuilder {
     }
     /// Append operations to the transaction `failure`
     #[inline]
-    pub fn or_else<F, O, I>(&mut self, operations: F) -> &mut Self
+    pub fn or_else<'a, F, O, I>(&mut self, operations: F) -> &mut Self
     where
         F: FnOnce(&mut Self) -> O,
         O: Into<Vec<I>>,
-        I: Into<TxnOp>,
+        I: Into<TxnOp<'a>>,
     {
         let temp: Vec<_> = operations(self).into();
         self.txn_req.or_else(temp);
