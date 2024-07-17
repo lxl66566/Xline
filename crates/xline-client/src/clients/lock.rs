@@ -17,7 +17,7 @@ use crate::{
     error::{Result, XlineClientError},
     lease_gen::LeaseIdGenerator,
     types::{
-        kv::TxnRequest as KvTxnRequest,
+        self,
         lease::{LeaseGrantRequest, LeaseKeepAliveRequest},
         watch::WatchRequest,
     },
@@ -84,22 +84,21 @@ impl XutexGuard {
         self.key.as_str()
     }
 
-    /// Return a `TxnRequest` which will perform the success ops when the locked key is exist.
+    /// Returns a [`Compare`] indicates whether the locked key exists.
     /// This method is syntactic sugar
     #[inline]
     #[must_use]
-    pub fn txn_check_locked_key(&self) -> KvTxnRequest {
-        let mut txn_request = KvTxnRequest::default();
-        #[allow(clippy::as_conversions)]
-        let cmp = Compare {
-            result: CompareResult::Greater as i32,
-            target: CompareTarget::Create as i32,
-            key: self.key().into(),
-            range_end: Vec::new(),
-            target_union: Some(TargetUnion::CreateRevision(0)),
-        };
-        txn_request.inner.compare.push(cmp);
-        txn_request
+    pub fn txn_check_locked_key(&self) -> types::kv::Compare {
+        types::kv::Compare(
+            #[allow(clippy::as_conversions)]
+            Compare {
+                result: CompareResult::Greater as i32,
+                target: CompareTarget::Create as i32,
+                key: self.key().into(),
+                range_end: Vec::new(),
+                target_union: Some(TargetUnion::CreateRevision(0)),
+            },
+        )
     }
 }
 
@@ -263,7 +262,7 @@ impl Xutex {
     /// use anyhow::Result;
     /// use xline_client::{
     ///     clients::Xutex,
-    ///     types::kv::{Compare, CompareResult, PutRequest, TxnOp},
+    ///     types::kv::{Compare, CompareResult, TxnOp},
     ///     Client, ClientOptions,
     /// };
     ///
@@ -275,20 +274,19 @@ impl Xutex {
     ///     let client = Client::connect(curp_members, ClientOptions::default()).await?;
     ///
     ///     let lock_client = client.lock_client();
-    ///     let kv_client = client.kv_client();
+    ///     let mut kv_client = client.kv_client();
     ///
     ///     let mut xutex = Xutex::new(lock_client, "lock-test", None, None).await?;
     ///     // when the `xutex_guard` drop, the lock will be unlocked.
     ///     let xutex_guard = xutex.lock_unsafe().await?;
-    ///     let txn_req = xutex_guard
-    ///         .txn_check_locked_key()
-    ///         .when([Compare::value("key2", CompareResult::Equal, "value2")])
-    ///         .and_then([TxnOp::put(
-    ///             PutRequest::new("key2", "value3").with_prev_kv(true),
-    ///         )])
-    ///         .or_else(&[]);
     ///
-    ///     let _resp = kv_client.txn(txn_req).await?;
+    ///     let _resp = kv_client
+    ///         .when(xutex_guard.txn_check_locked_key())
+    ///         .when(Compare::value("key2", CompareResult::Equal, "value2"))
+    ///         .and_then(|c| c.put("key2", "value3").with_prev_kv(true))
+    ///         .txn_exec()
+    ///         .await?;
+    ///
     ///     // the lock will be released when the lock session is dropped.
     ///     Ok(())
     /// }
