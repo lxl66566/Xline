@@ -6,6 +6,7 @@ on:
       - master
   pull_request:
     types: [opened, synchronize, reopened]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -25,6 +26,12 @@ jobs:
               args: "",
               rustflags: "",
               test: "llvm-cov nextest --all-features --workspace --codecov --output-path codecov.info",
+            }
+          - {
+              name: "Doc",
+              args: "",
+              rustflags: "",
+              test: "test --doc",
             }
           - {
               name: "Madsim",
